@@ -12,7 +12,7 @@ class RobotPath:
     def __init__(self):
         self.points = []
 
-    def calculate_path(self, start, end, step, type="straight", back=0):
+    def calculate_path(self, start, end, step, type="straight", back=0, width=0):
         """
         Calculate intermediate points from start to end with specified step distance.
 
@@ -25,10 +25,13 @@ class RobotPath:
         step : float
             Distance between consecutive points
         type : str, optional
-            Path type: "straight" (default) or "backAndForth"
+            Path type: "straight" (default), "backAndForth", or "zigzag"
         back : float, optional
             Distance to move back after each forward step (only for "backAndForth" type).
             Must be smaller than step. Default is 0.
+        width : float, optional
+            Width of the zigzag pattern perpendicular to the main direction (only for "zigzag" type).
+            Default is 0.
 
         Returns:
         --------
@@ -46,11 +49,23 @@ class RobotPath:
         if type == "straight" and back != 0:
             raise ValueError("Parameter 'back' must be 0 when type='straight'")
 
+        if type == "straight" and width != 0:
+            raise ValueError("Parameter 'width' must be 0 when type='straight'")
+
+        if type == "backAndForth" and width != 0:
+            raise ValueError("Parameter 'width' must be 0 when type='backAndForth'")
+
+        if type == "zigzag" and back != 0:
+            raise ValueError("Parameter 'back' must be 0 when type='zigzag'")
+
         if back >= step:
             raise ValueError(f"Parameter 'back' ({back}) must be smaller than 'step' ({step})")
 
         if back < 0:
             raise ValueError(f"Parameter 'back' ({back}) must be non-negative")
+
+        if width < 0:
+            raise ValueError(f"Parameter 'width' ({width}) must be non-negative")
 
         # Calculate total distance
         dx = end[0] - start[0]
@@ -64,12 +79,10 @@ class RobotPath:
         else:
             # Start and end are the same point
             self.points.append(start)
-            print(f"Point 0: ({start[0]:.2f}, {start[1]:.2f})")
             return self.points
 
         # Add start point
         self.points.append(start)
-        print(f"Point 0 (Start): ({start[0]:.2f}, {start[1]:.2f})")
 
         if type == "straight":
             # Original straight line behavior
@@ -80,20 +93,15 @@ class RobotPath:
                 x = start[0] + ux * distance
                 y = start[1] + uy * distance
                 self.points.append((x, y))
-                print(f"Point {i}: ({x:.2f}, {y:.2f})")
 
             # Add end point if not already reached
             if num_steps * step < total_distance:
                 self.points.append(end)
-                print(f"Point {num_steps + 1} (End): ({end[0]:.2f}, {end[1]:.2f})")
-            else:
-                print(f"(End point reached at Point {num_steps})")
 
         elif type == "backAndForth":
             # Back and forth pattern: forward by step, back by back, net progress = step - back
             net_progress = step - back
             current_distance = 0
-            point_count = 1
 
             while current_distance < total_distance:
                 # Move forward by step
@@ -103,15 +111,12 @@ class RobotPath:
                 if forward_distance >= total_distance:
                     # Add final end point
                     self.points.append(end)
-                    print(f"Point {point_count} (End): ({end[0]:.2f}, {end[1]:.2f})")
                     break
 
                 # Add forward point
                 x_forward = start[0] + ux * forward_distance
                 y_forward = start[1] + uy * forward_distance
                 self.points.append((x_forward, y_forward))
-                print(f"Point {point_count}: ({x_forward:.2f}, {y_forward:.2f})")
-                point_count += 1
 
                 # Move back by back distance
                 if back > 0:
@@ -119,14 +124,49 @@ class RobotPath:
                     x_back = start[0] + ux * backward_distance
                     y_back = start[1] + uy * backward_distance
                     self.points.append((x_back, y_back))
-                    print(f"Point {point_count} (back): ({x_back:.2f}, {y_back:.2f})")
-                    point_count += 1
 
                 # Update current distance (net progress)
                 current_distance = forward_distance - back
 
+        elif type == "zigzag":
+            # Zigzag pattern perpendicular to the main direction
+            # Calculate perpendicular unit vector (rotate 90 degrees counter-clockwise)
+            perp_ux = -uy
+            perp_uy = ux
+
+            # Start at left side of the start point (perpendicular offset)
+            current_distance = 0
+            side = -1  # Start on left side (-1), then alternate to right (+1)
+
+            # First point: offset to the left by width/2
+            x_offset = start[0] + perp_ux * (width / 2) * side
+            y_offset = start[1] + perp_uy * (width / 2) * side
+            self.points.append((x_offset, y_offset))
+
+            while current_distance < total_distance:
+                # Move forward by step
+                current_distance += step
+
+                # Check if we've reached or passed the end
+                if current_distance >= total_distance:
+                    # Move to the final position on the end line
+                    # Position on the opposite side from current side
+                    side = -side
+                    x_final = end[0] + perp_ux * (width / 2) * side
+                    y_final = end[1] + perp_uy * (width / 2) * side
+                    self.points.append((x_final, y_final))
+                    break
+
+                # Switch to opposite side
+                side = -side
+
+                # Calculate new position: forward along main direction + perpendicular offset
+                x_new = start[0] + ux * current_distance + perp_ux * (width / 2) * side
+                y_new = start[1] + uy * current_distance + perp_uy * (width / 2) * side
+                self.points.append((x_new, y_new))
+
         else:
-            raise ValueError(f"Invalid type '{type}'. Must be 'straight' or 'backAndForth'")
+            raise ValueError(f"Invalid type '{type}'. Must be 'straight', 'backAndForth', or 'zigzag'")
 
         return self.points
 
@@ -337,8 +377,9 @@ def main():
     # Define start and end points
     start_point = (0.5, 5)
     end_point = (10, 3)
-    step_distance = 0.8
-    back_distance = 0.1
+    step_distance = 0.1
+    back_distance = 0.0
+    width_distance =0.25
 
     print("=" * 50)
     print("ROBOT PATH CALCULATION")
@@ -347,6 +388,7 @@ def main():
     print(f"End Point: {end_point}")
     print(f"Step Distance: {step_distance}")
     print(f"Back Distance: {back_distance}")
+    print(f"Width Distance: {width_distance}")
     print("=" * 50)
     print()
 
@@ -356,11 +398,28 @@ def main():
     # points = robot_path.calculate_path(start_point, end_point, step_distance)
 
     # Option 2: Back and forth path
+    # points = robot_path.calculate_path(start_point, end_point, step_distance,
+    #                                   type="backAndForth", back=back_distance)
+
+    # Option 3: Zigzag path
     points = robot_path.calculate_path(start_point, end_point, step_distance,
-                                      type="backAndForth", back=back_distance)
+                                      type="zigzag", width=width_distance)
 
     print()
     print(f"Total points calculated: {len(points)}")
+    print("=" * 50)
+    print()
+
+    # Print all points
+    for i, point in enumerate(points):
+        if i == 0:
+            print(f"Point {i} (Start): ({point[0]:.2f}, {point[1]:.2f})")
+        elif i == len(points) - 1:
+            print(f"Point {i} (End): ({point[0]:.2f}, {point[1]:.2f})")
+        else:
+            print(f"Point {i}: ({point[0]:.2f}, {point[1]:.2f})")
+
+    print()
     print("=" * 50)
 
     # Visualize (static)
