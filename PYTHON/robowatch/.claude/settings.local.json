@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(conda install:*)",
+      "Bash(source ~/.bashrc)",
+      "Bash(source ~/.zshrc)",
+      "Bash(mamba install:*)",
+      "Bash(conda run:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
