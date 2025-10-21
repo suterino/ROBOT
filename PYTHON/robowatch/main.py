@@ -7,9 +7,9 @@ from PyQt6.QtCore import Qt
 
 import numpy as np
 import trimesh
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
-from mpl_toolkits.mplot3d import Axes3D
+from vispy import scene, app
+from vispy.scene import Mesh
+from vispy.geometry import MeshData
 
 print("Imports successful")
 
@@ -25,11 +25,24 @@ class RoboWatchGUI(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
 
-        # Create matplotlib figure and canvas
-        self.figure = Figure(figsize=(12, 8), dpi=100)
-        self.canvas = FigureCanvas(self.figure)
-        layout.addWidget(self.canvas)
+        # Create Vispy canvas
+        self.canvas = scene.SceneCanvas(keys='interactive', show=False)
+        self.view = self.canvas.central_widget.add_view()
+
+        # Set up camera with arcball for interactive navigation
+        self.view.camera = 'arcball'
+
+        # Enable mouse wheel zoom
+        self.view.camera.set_range()
+
+        # Bind keyboard events for zoom
+        self.canvas.events.key_press.connect(self.on_key_press)
+
+        # Convert canvas to Qt widget
+        native_canvas = self.canvas.native
+        layout.addWidget(native_canvas)
 
         central_widget.setLayout(layout)
 
@@ -37,7 +50,7 @@ class RoboWatchGUI(QMainWindow):
         self.create_menu_bar()
 
         self.current_mesh = None
-        self.ax = None
+        self.mesh_actor = None
 
         print("RoboWatchGUI initialization complete")
 
@@ -86,8 +99,8 @@ class RoboWatchGUI(QMainWindow):
                 print(f"Mesh bounds: {self.current_mesh.bounds}")
                 print(f"Mesh volume: {self.current_mesh.volume}")
 
-                # Display the mesh with matplotlib
-                self.display_mesh_matplotlib()
+                # Display the mesh with Vispy
+                self.display_mesh_vispy()
 
                 # Update window title
                 self.setWindowTitle(f"RoboWatch - {Path(file_path).name}")
@@ -99,62 +112,77 @@ class RoboWatchGUI(QMainWindow):
                 import traceback
                 traceback.print_exc()
 
-    def display_mesh_matplotlib(self):
-        """Display the mesh using matplotlib embedded in Qt"""
+    def display_mesh_vispy(self):
+        """Display the mesh using Vispy"""
         if self.current_mesh is None:
             return
 
+        # Clear previous mesh
+        if self.mesh_actor is not None:
+            self.mesh_actor.parent = None
+
         mesh = self.current_mesh
-        vertices = mesh.vertices
-        faces = mesh.faces
+        vertices = mesh.vertices.astype(np.float32)
+        faces = mesh.faces.astype(np.uint32)
 
-        # Clear previous plot
-        self.figure.clear()
-
-        # Create 3D subplot
-        self.ax = self.figure.add_subplot(111, projection='3d')
-
-        # Plot the mesh
-        self.ax.plot_trisurf(
-            vertices[:, 0],
-            vertices[:, 1],
-            vertices[:, 2],
-            triangles=faces,
-            color='lightblue',
-            edgecolor='darkblue',
-            linewidth=0.1,
-            alpha=0.9
+        # Create MeshData from vertices and faces
+        mesh_data = MeshData(
+            vertices=vertices,
+            faces=faces
         )
 
-        # Set labels
-        self.ax.set_xlabel('X')
-        self.ax.set_ylabel('Y')
-        self.ax.set_zlabel('Z')
-        self.ax.set_title(f"STL Viewer - Rotate, Zoom, Pan")
+        # Create mesh actor
+        self.mesh_actor = Mesh(
+            meshdata=mesh_data,
+            color=(0.5, 0.8, 1.0, 0.9),
+            shading='flat'
+        )
 
-        # Get mesh bounds and set equal aspect ratio
-        bounds = mesh.bounds
-        center = mesh.centroid
-        max_range = np.max(bounds[1] - bounds[0]) / 2.0
+        self.view.add(self.mesh_actor)
 
-        self.ax.set_xlim(center[0] - max_range, center[0] + max_range)
-        self.ax.set_ylim(center[1] - max_range, center[1] + max_range)
-        self.ax.set_zlim(center[2] - max_range, center[2] + max_range)
+        # Center and fit camera
+        mesh_center = mesh.centroid
+        mesh_bounds = mesh.bounds
+        mesh_size = np.max(mesh_bounds[1] - mesh_bounds[0])
 
-        # Draw and show
-        self.figure.tight_layout()
-        self.canvas.draw()
+        # Set camera to view the mesh
+        self.view.camera.center = mesh_center
+        self.view.camera.distance = mesh_size * 1.5
 
-        print("Mesh displayed in application window")
+        print("Mesh displayed in Vispy")
         print("Controls:")
-        print("  - Rotate: Click and drag")
-        print("  - Zoom: Scroll wheel or use toolbar")
-        print("  - Pan: Right-click and drag (or use toolbar)")
+        print("  - Rotate: Left-click and drag")
+        print("  - Zoom: Right-click drag up/down OR Scroll wheel OR +/- keys")
+        print("  - Pan: Middle-click and drag")
+        print("  - Reset: Press 'Home' or 'r' key")
+
+    def on_key_press(self, event):
+        """Handle keyboard events for zoom and other controls"""
+        if event.key == '+' or event.key == '=':
+            # Zoom in
+            self.view.camera.distance *= 0.8
+            self.canvas.update()
+            print("Zoomed in")
+        elif event.key == '-' or event.key == '_':
+            # Zoom out
+            self.view.camera.distance *= 1.25
+            self.canvas.update()
+            print("Zoomed out")
+        elif event.key == 'f':
+            # Fit to view
+            if self.current_mesh is not None:
+                mesh_center = self.current_mesh.centroid
+                mesh_bounds = self.current_mesh.bounds
+                mesh_size = np.max(mesh_bounds[1] - mesh_bounds[0])
+                self.view.camera.center = mesh_center
+                self.view.camera.distance = mesh_size * 1.5
+                self.canvas.update()
+                print("Fit to view")
 
 
 def main():
     print("Creating QApplication...")
-    app = QApplication(sys.argv)
+    app_qt = QApplication(sys.argv)
 
     print("Creating window...")
     window = RoboWatchGUI()
@@ -164,7 +192,7 @@ def main():
 
     print("Starting event loop...")
     print("GUI is running. Use File > Load STL to load an STL file.")
-    sys.exit(app.exec())
+    sys.exit(app_qt.exec())
 
 
 if __name__ == "__main__":
