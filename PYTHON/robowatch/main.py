@@ -53,6 +53,8 @@ class RoboWatchGUI(QMainWindow):
         self.picked_points = []
         self.point_picking_mode = False
         self.top_view_mode = False
+        self.mesh_edges_visible = False
+        self.mesh_opacity = 0.9
 
         # Store camera positions for view control
         self.saved_camera_state = None
@@ -153,6 +155,31 @@ class RoboWatchGUI(QMainWindow):
         view_control_layout.addWidget(cw_btn)
 
         dock_layout.addLayout(view_control_layout)
+
+        # Mesh Display label
+        mesh_label = QLabel("Mesh Display:")
+        mesh_label.setStyleSheet("margin-top: 15px; font-weight: bold;")
+        dock_layout.addWidget(mesh_label)
+
+        # Mesh transparency buttons
+        trans_layout = QHBoxLayout()
+
+        trans_btn = QPushButton("Transparent")
+        trans_btn.setStyleSheet("background-color: #2196F3; color: white; padding: 6px; font-size: 9px;")
+        trans_btn.clicked.connect(self.set_mesh_transparent)
+        trans_layout.addWidget(trans_btn)
+
+        opaque_btn = QPushButton("Opaque")
+        opaque_btn.setStyleSheet("background-color: #666; color: white; padding: 6px; font-size: 9px;")
+        opaque_btn.clicked.connect(self.set_mesh_opaque)
+        trans_layout.addWidget(opaque_btn)
+
+        edges_btn = QPushButton("Edges")
+        edges_btn.setStyleSheet("background-color: #FF5722; color: white; padding: 6px; font-size: 9px;")
+        edges_btn.clicked.connect(self.toggle_mesh_edges)
+        trans_layout.addWidget(edges_btn)
+
+        dock_layout.addLayout(trans_layout)
 
         # Add stretch to bottom
         dock_layout.addStretch()
@@ -367,6 +394,42 @@ class RoboWatchGUI(QMainWindow):
         if self.plotter and 'z' in self.axis_actors:
             self.axis_actors['z'].SetVisibility(state != 0)
             self.plotter.render()
+
+    def set_mesh_transparent(self):
+        """Make mesh transparent to see internal details"""
+        if not self.plotter or not self.mesh_actor:
+            return
+
+        self.mesh_opacity = 0.3
+        self.mesh_actor.SetOpacity(self.mesh_opacity)
+        self.plotter.render()
+        print(f"Mesh opacity set to {self.mesh_opacity * 100}%")
+
+    def set_mesh_opaque(self):
+        """Make mesh fully opaque"""
+        if not self.plotter or not self.mesh_actor:
+            return
+
+        self.mesh_opacity = 1.0
+        self.mesh_actor.SetOpacity(self.mesh_opacity)
+        self.plotter.render()
+        print(f"Mesh opacity set to {self.mesh_opacity * 100}%")
+
+    def toggle_mesh_edges(self):
+        """Toggle mesh edges visibility"""
+        if not self.plotter or not self.mesh_actor:
+            return
+
+        self.mesh_edges_visible = not self.mesh_edges_visible
+        if self.mesh_edges_visible:
+            self.mesh_actor.GetProperty().EdgeVisibilityOn()
+            self.mesh_actor.GetProperty().SetEdgeColor([0, 0, 0])  # Black edges
+            print("Mesh edges ON")
+        else:
+            self.mesh_actor.GetProperty().EdgeVisibilityOff()
+            print("Mesh edges OFF")
+
+        self.plotter.render()
 
     def toggle_top_view(self):
         """Toggle top view mode"""
