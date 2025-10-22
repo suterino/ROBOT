@@ -189,7 +189,9 @@ class RoboWatchGUI(QMainWindow):
         zoom_slider.setMaximum(500)  # 5.0x
         zoom_slider.setValue(100)  # 1.0x (default)
         zoom_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        zoom_slider.setTickInterval(50)
+        zoom_slider.setTickInterval(10)
+        # Use sliderMoved for smooth dragging feedback
+        zoom_slider.sliderMoved.connect(self.on_zoom_slider_change)
         zoom_slider.valueChanged.connect(self.on_zoom_slider_change)
         self.zoom_slider = zoom_slider
         zoom_layout.addWidget(zoom_slider)
@@ -214,6 +216,8 @@ class RoboWatchGUI(QMainWindow):
         opacity_slider.setValue(90)
         opacity_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         opacity_slider.setTickInterval(10)
+        # Use sliderMoved for smooth dragging feedback
+        opacity_slider.sliderMoved.connect(self.on_opacity_slider_change)
         opacity_slider.valueChanged.connect(self.on_opacity_slider_change)
         self.opacity_slider = opacity_slider
         opacity_layout.addWidget(opacity_slider)
@@ -451,9 +455,11 @@ class RoboWatchGUI(QMainWindow):
         self.mesh_actor.GetProperty().SetOpacity(self.mesh_opacity)
         self.plotter.render()
 
+        # Process events to update display smoothly
+        QApplication.instance().processEvents()
+
         # Update label
         self.opacity_label.setText(f"Opacity: {value}%")
-        print(f"Mesh opacity set to {value}%")
 
     def on_zoom_slider_change(self, value):
         """Handle zoom slider change (10-500 = 0.1x-5.0x)"""
@@ -470,12 +476,14 @@ class RoboWatchGUI(QMainWindow):
         self.plotter.camera.zoom(zoom_factor)
         self.plotter.render()
 
+        # Process events to update display smoothly
+        QApplication.instance().processEvents()
+
         # Update state
         self.zoom_level = target_zoom
 
         # Update label
         self.zoom_label.setText(f"Zoom: {target_zoom:.1f}x")
-        print(f"Zoom set to {target_zoom:.1f}x")
 
     def toggle_mesh_edges(self):
         """Toggle mesh edges visibility"""
