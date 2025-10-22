@@ -295,6 +295,11 @@ class RoboWatchGUI(QMainWindow):
             print("  ✓ Rendering mesh...")
             self.plotter.render()
 
+            # Initialize interactor to make window visible
+            print("  ✓ Initializing interactor...")
+            self.plotter.iren.initialize()
+            print("  ✓ Interactor initialized - window should be visible now")
+
             self.status_label.setText("Done! Mesh displayed")
             print("\nMesh displayed in PyVista!")
             print("Controls:")
