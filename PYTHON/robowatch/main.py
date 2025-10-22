@@ -57,7 +57,7 @@ class RoboWatchGUI(QMainWindow):
         self.top_view_mode = False
         self.side_view_mode = False
         self.mesh_edges_visible = False
-        self.mesh_opacity = 0.9
+        self.mesh_opacity = 0.3
         self.zoom_level = 1.0  # Default zoom level
 
         # Store camera positions for view control
@@ -176,7 +176,7 @@ class RoboWatchGUI(QMainWindow):
         rotation_buttons_layout = QHBoxLayout()
 
         # Counter-clockwise rotation button
-        self.ccw_btn = QPushButton("↶ CCW")
+        self.ccw_btn = QPushButton("CW ↷")
         self.ccw_btn.setStyleSheet(
             "background-color: #888888; color: #cccccc; font-weight: bold; padding: 6px;"
         )
@@ -185,7 +185,7 @@ class RoboWatchGUI(QMainWindow):
         rotation_buttons_layout.addWidget(self.ccw_btn)
 
         # Clockwise rotation button
-        self.cw_btn = QPushButton("CW ↷")
+        self.cw_btn = QPushButton("↶ CCW")
         self.cw_btn.setStyleSheet(
             "background-color: #888888; color: #cccccc; font-weight: bold; padding: 6px;"
         )
@@ -228,7 +228,7 @@ class RoboWatchGUI(QMainWindow):
         dock_layout.addWidget(mesh_label)
 
         # Opacity label
-        opacity_label = QLabel("Opacity: 90%")
+        opacity_label = QLabel("Opacity: 30%")
         opacity_label.setStyleSheet("font-size: 10px; color: #666;")
         self.opacity_label = opacity_label
         dock_layout.addWidget(opacity_label)
@@ -238,7 +238,7 @@ class RoboWatchGUI(QMainWindow):
         opacity_slider = QSlider(Qt.Orientation.Horizontal)
         opacity_slider.setMinimum(0)
         opacity_slider.setMaximum(100)
-        opacity_slider.setValue(90)
+        opacity_slider.setValue(30)
         opacity_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         opacity_slider.setTickInterval(10)
         # Use sliderMoved for smooth dragging feedback
@@ -407,7 +407,7 @@ class RoboWatchGUI(QMainWindow):
             self.mesh_actor = self.plotter.add_mesh(
                 self.current_mesh,
                 color=(0.5, 0.8, 1.0),
-                opacity=0.9
+                opacity=0.3
             )
             print("  ✓ Mesh added")
 
