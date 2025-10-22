@@ -9,7 +9,13 @@
       "Read(//Users/massimo/GitHub/ROBOT/PYTHON/**)",
       "Bash(find:*)",
       "Bash(pip install:*)",
-      "Bash(python -m py_compile:*)"
+      "Bash(python -m py_compile:*)",
+      "Bash(timeout 10 python:*)",
+      "Bash(python:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(pkill:*)",
+      "Bash(timeout 15 python:*)"
     ],
     "deny": [],
     "ask": []
