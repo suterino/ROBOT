@@ -81,7 +81,7 @@ class RoboWatchGUI(QMainWindow):
             "🖱 Scroll: Zoom\n"
             "🖱 Left-drag: Rotate\n"
             "🖱 Middle-drag: Pan\n"
-            "🖱 Right-drag: Zoom"
+            "⌨ +/-: Zoom in/out"
         )
         controls_info.setStyleSheet(
             "font-size: 9px; color: #555; padding: 6px; "
@@ -595,6 +595,45 @@ class RoboWatchGUI(QMainWindow):
             print(f"Error restoring normal view: {e}")
             import traceback
             traceback.print_exc()
+
+    def zoom_in(self):
+        """Zoom in using camera zoom"""
+        if not self.plotter:
+            return
+
+        try:
+            self.plotter.camera.zoom(1.2)  # Zoom in by 20%
+            self.plotter.render()
+            print("Zoomed in")
+        except Exception as e:
+            print(f"Error zooming in: {e}")
+
+    def zoom_out(self):
+        """Zoom out using camera zoom"""
+        if not self.plotter:
+            return
+
+        try:
+            self.plotter.camera.zoom(0.8)  # Zoom out by 20%
+            self.plotter.render()
+            print("Zoomed out")
+        except Exception as e:
+            print(f"Error zooming out: {e}")
+
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts"""
+        key = event.key()
+
+        # Plus/Equals key for zoom in
+        if key == Qt.Key.Key_Plus or key == Qt.Key.Key_Equal:
+            self.zoom_in()
+            event.accept()
+        # Minus key for zoom out
+        elif key == Qt.Key.Key_Minus:
+            self.zoom_out()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
     def toggle_point_picking(self):
         """Toggle point picking mode"""
