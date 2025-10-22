@@ -53,14 +53,17 @@ class RoboWatchGUI(QMainWindow):
         self.mesh_actor = None
         self.axis_actors = {}  # Store axis actors
         self.markers_actor = None
+        self.path_lines_actor = None  # Store path lines connecting points
         self.picked_points = []
+        self.point_path_id = []  # Track which path each point belongs to
+        self.current_path_id = 0  # ID of current path being created
         self.point_picking_mode = False
         self.top_view_mode = False
         self.side_view_mode = False
         self.mesh_edges_visible = False
         self.mesh_opacity = 0.3
         self.zoom_level = 1.0  # Default zoom level
-        self.last_pick_time = 0  # For debouncing point picks
+        self.last_pick_time = time.time() - 1  # For debouncing point picks (start in past)
 
         # Store camera positions for view control
         self.saved_camera_state = None  # Top view camera state
@@ -99,8 +102,8 @@ class RoboWatchGUI(QMainWindow):
         )
         dock_layout.addWidget(controls_info)
 
-        # Add point button
-        self.add_point_btn = QPushButton("add point")
+        # Create path button
+        self.add_point_btn = QPushButton("create path")
         self.add_point_btn.setStyleSheet(
             "background-color: #888888; color: #cccccc; font-weight: bold; padding: 8px;"
         )
@@ -1053,31 +1056,48 @@ class RoboWatchGUI(QMainWindow):
 
         self.point_picking_mode = not self.point_picking_mode
         if self.point_picking_mode:
+            # Start a new path - increment path ID (don't clear old points)
+            self.current_path_id += 1
+            print(f"Starting new path (ID: {self.current_path_id})")
+
             self.add_point_btn.setStyleSheet(
                 "background-color: #f44336; color: white; font-weight: bold; padding: 8px;"
             )
             self.add_point_btn.setText("picking...")
-            print("Point picking mode ON - Click on mesh to add points")
+            print("Path picking mode ON - Click on mesh to create path points")
+            # Reset the pick timer to ensure first click works
+            self.last_pick_time = time.time() - 1
             # Setup mouse click callback for picking
             self._setup_point_picking()
         else:
             self.add_point_btn.setStyleSheet(
                 "background-color: #FF9800; color: white; font-weight: bold; padding: 8px;"
             )
-            self.add_point_btn.setText("add point")
-            print("Point picking mode OFF")
+            self.add_point_btn.setText("create path")
+            print("Path picking mode OFF")
             # Remove mouse click callback
             self._remove_point_picking()
 
     def add_picked_point(self, point):
-        """Add a point to the picked points list"""
+        """Add a point to the picked points list and connect with previous point"""
         self.picked_points.append(point)
-        point_str = f"Point {len(self.picked_points)}: ({point[0]:.2f}, {point[1]:.2f}, {point[2]:.2f})"
+        self.point_path_id.append(self.current_path_id)
+
+        # Count how many points are in the current path
+        points_in_current_path = sum(1 for pid in self.point_path_id if pid == self.current_path_id)
+
+        # First point of current path is labeled as "Start point..."
+        if points_in_current_path == 1:
+            point_str = f"Start point... (Path {self.current_path_id}): ({point[0]:.2f}, {point[1]:.2f}, {point[2]:.2f})"
+        else:
+            point_str = f"Point {points_in_current_path} (Path {self.current_path_id}): ({point[0]:.2f}, {point[1]:.2f}, {point[2]:.2f})"
+
         self.points_list.addItem(QListWidgetItem(point_str))
         # Scroll to show the newly added point
         self.points_list.scrollToBottom()
         print(f"Added point: {point}")
         self.update_markers()
+        self.update_path()  # Update path lines between consecutive points
 
     def update_markers(self):
         """Update marker visualization"""
@@ -1091,14 +1111,83 @@ class RoboWatchGUI(QMainWindow):
         if self.markers_actor is not None:
             self.plotter.remove_actor(self.markers_actor)
 
-        # Create new markers as red spheres (circles)
+        # Create new markers: first point green, rest red
         points = np.array(self.picked_points)
+
+        # Create color array: first point of each path is dark green, rest are red (255, 0, 0)
+        colors = []
+        for i in range(len(points)):
+            # Check if this is the first point of its path
+            is_first_in_path = True
+            current_path = self.point_path_id[i]
+            for j in range(i):
+                if self.point_path_id[j] == current_path:
+                    is_first_in_path = False
+                    break
+
+            if is_first_in_path:
+                colors.append([0, 128, 0])  # Dark green for start point of path
+            else:
+                colors.append([255, 0, 0])  # Red for subsequent points
+
+        colors = np.array(colors)
+
         self.markers_actor = self.plotter.add_points(
             points,
-            color='red',
+            scalars=colors,
+            rgb=True,
             point_size=10,
             render_points_as_spheres=True
         )
+        # Force immediate render update
+        self.plotter.render_window.Render()
+        QApplication.instance().processEvents()
+
+    def update_path(self):
+        """Update path lines connecting consecutive points"""
+        # Remove old path lines
+        if self.path_lines_actor is not None:
+            self.plotter.remove_actor(self.path_lines_actor)
+            self.path_lines_actor = None
+
+        # Need at least 2 points to draw a line
+        if len(self.picked_points) < 2:
+            return
+
+        # Create lines connecting consecutive points (only within same path)
+        points = np.array(self.picked_points)
+
+        # Create a polyline connecting all points in sequence
+        # Only draw lines between consecutive points in the same path
+        lines = []
+        for i in range(len(points) - 1):
+            # Only connect if they're in the same path
+            if self.point_path_id[i] == self.point_path_id[i + 1]:
+                lines.append([points[i], points[i + 1]])
+
+        if lines:
+            lines_array = np.array(lines)
+            # Flatten to (n*2, 3) for add_lines format
+            line_points = lines_array.reshape(-1, 3)
+
+            # Create connectivity array: [2, p0, p1, 2, p2, p3, ...]
+            # This tells PyVista to draw lines between consecutive pairs
+            connectivity = []
+            for i in range(0, len(line_points), 2):
+                connectivity.extend([2, i, i + 1])
+
+            # Create a polydata object with the line segments
+            from pyvista import PolyData
+            path_polydata = PolyData(line_points, connectivity)
+
+            # Add the path lines to the plotter
+            self.path_lines_actor = self.plotter.add_mesh(
+                path_polydata,
+                color='yellow',
+                line_width=3,
+                style='wireframe'
+            )
+
         # Force immediate render update
         self.plotter.render_window.Render()
         QApplication.instance().processEvents()
@@ -1121,6 +1210,7 @@ class RoboWatchGUI(QMainWindow):
 
         # Update visualization
         self.update_markers()
+        self.update_path()  # Update path lines after clearing points
         # Force immediate render update
         self.plotter.render_window.Render()
         QApplication.instance().processEvents()
