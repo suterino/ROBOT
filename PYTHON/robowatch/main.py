@@ -17,22 +17,19 @@ class RoboWatchGUI(QMainWindow):
         print("Initializing RoboWatchGUI...")
         super().__init__()
         self.setWindowTitle("RoboWatch - UR5e STL Analyzer")
-        self.setGeometry(100, 100, 1600, 900)
+        self.setGeometry(100, 100, 350, 700)  # Compact window size for control panel only
 
-        # Create central widget and layout
+        # Create minimal central widget (mostly hidden)
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout()
-        layout.setContentsMargins(5, 5, 5, 5)
-
-        # Add info label about PyVista window
-        info = QLabel("3D View: PyVista opens in a separate window\nUse controls below to manage the view")
-        info.setStyleSheet("color: #666; font-size: 10px; padding: 10px; background: #f0f0f0; border-radius: 4px;")
-        layout.addWidget(info)
-
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addStretch()
-
         central_widget.setLayout(layout)
+
+        # Set central widget to be hidden/minimal
+        central_widget.setMaximumWidth(1)
+        central_widget.setMaximumHeight(1)
 
         # Don't create plotter yet - create it when mesh is loaded
         # This avoids creating an empty window upfront
@@ -201,9 +198,11 @@ class RoboWatchGUI(QMainWindow):
         dock_layout.addWidget(info_label)
 
         dock_widget.setLayout(dock_layout)
+        dock_widget.setMaximumWidth(280)  # Limit dock width
         dock.setWidget(dock_widget)
 
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        self.resizeDocks([dock], [280], Qt.Orientation.Horizontal)
 
     def create_menu_bar(self):
         """Create the menu bar with File menu"""
@@ -401,7 +400,7 @@ class RoboWatchGUI(QMainWindow):
             return
 
         self.mesh_opacity = 0.3
-        self.mesh_actor.SetOpacity(self.mesh_opacity)
+        self.mesh_actor.GetProperty().SetOpacity(self.mesh_opacity)
         self.plotter.render()
         print(f"Mesh opacity set to {self.mesh_opacity * 100}%")
 
@@ -411,7 +410,7 @@ class RoboWatchGUI(QMainWindow):
             return
 
         self.mesh_opacity = 1.0
-        self.mesh_actor.SetOpacity(self.mesh_opacity)
+        self.mesh_actor.GetProperty().SetOpacity(self.mesh_opacity)
         self.plotter.render()
         print(f"Mesh opacity set to {self.mesh_opacity * 100}%")
 
