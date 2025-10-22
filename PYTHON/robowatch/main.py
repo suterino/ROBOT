@@ -1,8 +1,9 @@
 import sys
+import time
 from pathlib import Path
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QVBoxLayout,
                              QHBoxLayout, QWidget, QPushButton, QLabel, QListWidget,
-                             QListWidgetItem, QDockWidget, QCheckBox, QSlider, QSpinBox)
+                             QListWidgetItem, QDockWidget, QCheckBox, QSlider, QSpinBox, QRadioButton)
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
 
@@ -59,6 +60,7 @@ class RoboWatchGUI(QMainWindow):
         self.mesh_edges_visible = False
         self.mesh_opacity = 0.3
         self.zoom_level = 1.0  # Default zoom level
+        self.last_pick_time = 0  # For debouncing point picks
 
         # Store camera positions for view control
         self.saved_camera_state = None  # Top view camera state
@@ -97,13 +99,14 @@ class RoboWatchGUI(QMainWindow):
         )
         dock_layout.addWidget(controls_info)
 
-        # Start button
-        self.start_btn = QPushButton("Start")
-        self.start_btn.setStyleSheet(
-            "background-color: #4CAF50; color: white; font-weight: bold; padding: 8px;"
+        # Add point button
+        self.add_point_btn = QPushButton("add point")
+        self.add_point_btn.setStyleSheet(
+            "background-color: #888888; color: #cccccc; font-weight: bold; padding: 8px;"
         )
-        self.start_btn.clicked.connect(self.toggle_point_picking)
-        dock_layout.addWidget(self.start_btn)
+        self.add_point_btn.clicked.connect(self.toggle_point_picking)
+        self.add_point_btn.setEnabled(False)
+        dock_layout.addWidget(self.add_point_btn)
 
         # Points list label
         points_label = QLabel("Picked Points:")
@@ -114,10 +117,22 @@ class RoboWatchGUI(QMainWindow):
         self.points_list = QListWidget()
         dock_layout.addWidget(self.points_list)
 
-        # Clear points button
-        clear_btn = QPushButton("Clear Points")
+        # Clear point button with "all" radio button
+        clear_points_layout = QHBoxLayout()
+
+        # Clear point button (narrow)
+        clear_btn = QPushButton("Clear Point")
+        clear_btn.setMaximumWidth(90)
         clear_btn.clicked.connect(self.clear_points)
-        dock_layout.addWidget(clear_btn)
+        clear_points_layout.addWidget(clear_btn)
+
+        # "all" radio button to control clear behavior
+        self.clear_all_radio = QRadioButton("all")
+        self.clear_all_radio.setChecked(True)  # Default: clear all points
+        clear_points_layout.addWidget(self.clear_all_radio)
+
+        clear_points_layout.addStretch()  # Add stretch to keep button and radio on left
+        dock_layout.addLayout(clear_points_layout)
 
         # Axes label
         axes_label = QLabel("Axes:")
@@ -472,7 +487,7 @@ class RoboWatchGUI(QMainWindow):
             # Allow interaction initially - user can click "Top" to freeze the view
             if hasattr(self.plotter, 'iren') and self.plotter.iren:
                 try:
-                    from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
+                    from vtkmodules.vtkRenderingCore import vtkInteractorStyleTrackballCamera
                     trackball_style = vtkInteractorStyleTrackballCamera()
                     self.plotter.iren.SetInteractorStyle(trackball_style)
                     print("  ✓ Interaction ENABLED on load - click 'Top' to freeze view")
@@ -655,8 +670,14 @@ class RoboWatchGUI(QMainWindow):
                 "background-color: #FF9800; color: white; font-weight: bold; padding: 6px; border-radius: 4px;"
             )
 
+            # Enable add point button
+            self.add_point_btn.setEnabled(True)
+            self.add_point_btn.setStyleSheet(
+                "background-color: #FF9800; color: white; font-weight: bold; padding: 8px;"
+            )
+
             self.set_top_view()
-            print("Top View mode ON - Side view disabled - CW/CCW buttons enabled")
+            print("Top View mode ON - Side view disabled - CW/CCW buttons enabled - add point enabled")
         else:
             # Deactivate Top view
             self.top_btn.setStyleSheet(
@@ -679,8 +700,18 @@ class RoboWatchGUI(QMainWindow):
                 "background-color: #888888; color: #cccccc; font-weight: bold; padding: 6px; border-radius: 4px;"
             )
 
+            # Disable add point button and stop picking if active
+            if self.point_picking_mode:
+                self.point_picking_mode = False
+                self._remove_point_picking()
+            self.add_point_btn.setEnabled(False)
+            self.add_point_btn.setStyleSheet(
+                "background-color: #888888; color: #cccccc; font-weight: bold; padding: 8px;"
+            )
+            self.add_point_btn.setText("add point")
+
             self.restore_normal_view()
-            print("Top View mode OFF - Side view re-enabled - CW/CCW buttons disabled")
+            print("Top View mode OFF - Side view re-enabled - CW/CCW buttons disabled - add point disabled")
 
     def set_top_view(self):
         """Set camera to top view - restore initial camera position and freeze interaction"""
@@ -697,7 +728,7 @@ class RoboWatchGUI(QMainWindow):
             # Freeze mouse interaction by setting a None style
             if hasattr(self.plotter, 'iren') and self.plotter.iren:
                 try:
-                    from vtkmodules.vtkInteractionStyle import vtkInteractorStyleNone
+                    from vtkmodules.vtkRenderingCore import vtkInteractorStyleNone
                     frozen_style = vtkInteractorStyleNone()
                     self.plotter.iren.SetInteractorStyle(frozen_style)
                     print("  ✓ Mouse interaction FROZEN")
@@ -744,8 +775,14 @@ class RoboWatchGUI(QMainWindow):
                 "background-color: #FF9800; color: white; font-weight: bold; padding: 6px; border-radius: 4px;"
             )
 
+            # Enable add point button
+            self.add_point_btn.setEnabled(True)
+            self.add_point_btn.setStyleSheet(
+                "background-color: #FF9800; color: white; font-weight: bold; padding: 8px;"
+            )
+
             self.set_side_view()
-            print("Side View mode ON - Top view disabled - CW/CCW buttons enabled")
+            print("Side View mode ON - Top view disabled - CW/CCW buttons enabled - add point enabled")
         else:
             # Deactivate Side view
             self.side_btn.setStyleSheet(
@@ -768,8 +805,18 @@ class RoboWatchGUI(QMainWindow):
                 "background-color: #888888; color: #cccccc; font-weight: bold; padding: 6px; border-radius: 4px;"
             )
 
+            # Disable add point button and stop picking if active
+            if self.point_picking_mode:
+                self.point_picking_mode = False
+                self._remove_point_picking()
+            self.add_point_btn.setEnabled(False)
+            self.add_point_btn.setStyleSheet(
+                "background-color: #888888; color: #cccccc; font-weight: bold; padding: 8px;"
+            )
+            self.add_point_btn.setText("add point")
+
             self.restore_normal_view()
-            print("Side View mode OFF - Top view re-enabled - CW/CCW buttons disabled")
+            print("Side View mode OFF - Top view re-enabled - CW/CCW buttons disabled - add point disabled")
 
     def set_side_view(self):
         """Set camera to side view - restore initial side view camera position and freeze interaction"""
@@ -786,7 +833,7 @@ class RoboWatchGUI(QMainWindow):
             # Freeze mouse interaction by setting a None style
             if hasattr(self.plotter, 'iren') and self.plotter.iren:
                 try:
-                    from vtkmodules.vtkInteractionStyle import vtkInteractorStyleNone
+                    from vtkmodules.vtkRenderingCore import vtkInteractorStyleNone
                     frozen_style = vtkInteractorStyleNone()
                     self.plotter.iren.SetInteractorStyle(frozen_style)
                     print("  ✓ Mouse interaction FROZEN")
@@ -940,7 +987,7 @@ class RoboWatchGUI(QMainWindow):
             # Re-enable mouse interaction by setting trackball style (default PyVista style)
             if hasattr(self.plotter, 'iren') and self.plotter.iren:
                 try:
-                    from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
+                    from vtkmodules.vtkRenderingCore import vtkInteractorStyleTrackballCamera
                     trackball_style = vtkInteractorStyleTrackballCamera()
                     self.plotter.iren.SetInteractorStyle(trackball_style)
                     print("  ✓ Mouse interaction UNFROZEN")
@@ -998,27 +1045,37 @@ class RoboWatchGUI(QMainWindow):
             super().keyPressEvent(event)
 
     def toggle_point_picking(self):
-        """Toggle point picking mode"""
+        """Toggle point picking mode - only available when Top or Side view is active"""
+        # Only allow toggling if a view mode is active
+        if not (self.top_view_mode or self.side_view_mode):
+            print("Point picking requires Top or Side view to be active")
+            return
+
         self.point_picking_mode = not self.point_picking_mode
         if self.point_picking_mode:
-            self.start_btn.setStyleSheet(
+            self.add_point_btn.setStyleSheet(
                 "background-color: #f44336; color: white; font-weight: bold; padding: 8px;"
             )
-            self.start_btn.setText("Stop")
-            print("Point picking mode ON")
-            # TODO: Implement point picking with PyVista
+            self.add_point_btn.setText("picking...")
+            print("Point picking mode ON - Click on mesh to add points")
+            # Setup mouse click callback for picking
+            self._setup_point_picking()
         else:
-            self.start_btn.setStyleSheet(
-                "background-color: #4CAF50; color: white; font-weight: bold; padding: 8px;"
+            self.add_point_btn.setStyleSheet(
+                "background-color: #FF9800; color: white; font-weight: bold; padding: 8px;"
             )
-            self.start_btn.setText("Start")
+            self.add_point_btn.setText("add point")
             print("Point picking mode OFF")
+            # Remove mouse click callback
+            self._remove_point_picking()
 
     def add_picked_point(self, point):
         """Add a point to the picked points list"""
         self.picked_points.append(point)
         point_str = f"Point {len(self.picked_points)}: ({point[0]:.2f}, {point[1]:.2f}, {point[2]:.2f})"
         self.points_list.addItem(QListWidgetItem(point_str))
+        # Scroll to show the newly added point
+        self.points_list.scrollToBottom()
         print(f"Added point: {point}")
         self.update_markers()
 
@@ -1034,17 +1091,101 @@ class RoboWatchGUI(QMainWindow):
         if self.markers_actor is not None:
             self.plotter.remove_actor(self.markers_actor)
 
-        # Create new markers
+        # Create new markers as red spheres (circles)
         points = np.array(self.picked_points)
-        self.markers_actor = self.plotter.add_points(points, color='red', point_size=10)
-        self.plotter.render()
+        self.markers_actor = self.plotter.add_points(
+            points,
+            color='red',
+            point_size=10,
+            render_points_as_spheres=True
+        )
+        # Force immediate render update
+        self.plotter.render_window.Render()
+        QApplication.instance().processEvents()
 
     def clear_points(self):
-        """Clear all picked points"""
-        self.picked_points = []
-        self.points_list.clear()
+        """Clear points based on 'all' radio button state"""
+        if self.clear_all_radio.isChecked():
+            # Clear all points
+            self.picked_points = []
+            self.points_list.clear()
+            print("All points cleared")
+        else:
+            # Clear only the last point
+            if len(self.picked_points) > 0:
+                removed_point = self.picked_points.pop()
+                self.points_list.takeItem(self.points_list.count() - 1)
+                print(f"Removed last point: ({removed_point[0]:.2f}, {removed_point[1]:.2f}, {removed_point[2]:.2f})")
+            else:
+                print("No points to clear")
+
+        # Update visualization
         self.update_markers()
-        print("Points cleared")
+        # Force immediate render update
+        self.plotter.render_window.Render()
+        QApplication.instance().processEvents()
+
+    def _setup_point_picking(self):
+        """Setup mouse click callback for point picking on the mesh"""
+        if not self.plotter or not self.plotter.iren:
+            print("Error: Cannot setup point picking without plotter")
+            return
+
+        try:
+            # Register left click event on the render window
+            self.plotter.iren.add_observer('LeftButtonPressEvent', self._on_mesh_pick)
+            print("Point picking callback registered")
+        except Exception as e:
+            print(f"Error setting up point picking: {e}")
+
+    def _remove_point_picking(self):
+        """Remove mouse click callback for point picking"""
+        if not self.plotter or not self.plotter.iren:
+            return
+
+        try:
+            # Remove the observer
+            self.plotter.iren.remove_observer('LeftButtonPressEvent')
+            print("Point picking callback removed")
+        except Exception as e:
+            print(f"Error removing point picking: {e}")
+
+    def _on_mesh_pick(self, obj, event):
+        """Callback for mesh click - picks a point on the surface"""
+        if not self.point_picking_mode or not self.plotter:
+            return
+
+        try:
+            # Debounce: prevent multiple picks from the same click event (within 100ms)
+            current_time = time.time()
+            if current_time - self.last_pick_time < 0.1:
+                return
+            self.last_pick_time = current_time
+
+            # Get the click position using snake_case method
+            click_pos = self.plotter.iren.get_event_position()
+
+            # Create a picker to find the closest point on the mesh
+            from vtkmodules.vtkRenderingCore import vtkCellPicker
+            picker = vtkCellPicker()
+            picker.Pick(click_pos[0], click_pos[1], 0, self.plotter.renderer)
+
+            # Get the picked position in world coordinates
+            if picker.GetCellId() >= 0:
+                # Get the picked position
+                picked_position = picker.GetPickPosition()
+
+                # Add the point
+                self.add_picked_point(picked_position)
+
+                # Force render update to show the point
+                self.plotter.render_window.Render()
+                QApplication.instance().processEvents()
+                print(f"Point picked at: ({picked_position[0]:.2f}, {picked_position[1]:.2f}, {picked_position[2]:.2f})")
+        except Exception as e:
+            print(f"Error picking point: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 def main():
