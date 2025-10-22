@@ -68,9 +68,26 @@ class RoboWatchGUI(QMainWindow):
         dock_layout = QVBoxLayout()
 
         # Title
-        title = QLabel("Path Planning")
+        title = QLabel("RoboWatch Controls")
         title.setStyleSheet("font-weight: bold; font-size: 12px;")
         dock_layout.addWidget(title)
+
+        # Controls info box
+        controls_label = QLabel("3D View Controls:")
+        controls_label.setStyleSheet("margin-top: 8px; font-weight: bold; font-size: 10px;")
+        dock_layout.addWidget(controls_label)
+
+        controls_info = QLabel(
+            "🖱 Scroll: Zoom\n"
+            "🖱 Left-drag: Rotate\n"
+            "🖱 Middle-drag: Pan\n"
+            "🖱 Right-drag: Zoom"
+        )
+        controls_info.setStyleSheet(
+            "font-size: 9px; color: #555; padding: 6px; "
+            "background: #f9f9f9; border-radius: 3px; border: 1px solid #e0e0e0;"
+        )
+        dock_layout.addWidget(controls_info)
 
         # Start button
         self.start_btn = QPushButton("Start")
