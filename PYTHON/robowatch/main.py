@@ -17,7 +17,12 @@ class RoboWatchGUI(QMainWindow):
         print("Initializing RoboWatchGUI...")
         super().__init__()
         self.setWindowTitle("RoboWatch - UR5e STL Analyzer")
-        self.setGeometry(100, 100, 350, 700)  # Compact window size for control panel only
+
+        # Position window on the largest monitor (usually external monitor on laptop)
+        self._position_menu_on_largest_monitor()
+
+        # Set window size for compact control panel
+        self.resize(350, 700)
 
         # Create minimal central widget (mostly hidden)
         central_widget = QWidget()
@@ -154,20 +159,22 @@ class RoboWatchGUI(QMainWindow):
         view_control_layout.addWidget(self.top_btn)
 
         # Counter-clockwise rotation button
-        ccw_btn = QPushButton("↶ CCW")
-        ccw_btn.setStyleSheet(
-            "background-color: #FF9800; color: white; font-weight: bold; padding: 6px;"
+        self.ccw_btn = QPushButton("↶ CCW")
+        self.ccw_btn.setStyleSheet(
+            "background-color: #888888; color: #cccccc; font-weight: bold; padding: 6px;"
         )
-        ccw_btn.clicked.connect(self.rotate_view_ccw)
-        view_control_layout.addWidget(ccw_btn)
+        self.ccw_btn.clicked.connect(self.rotate_view_ccw)
+        self.ccw_btn.setEnabled(False)
+        view_control_layout.addWidget(self.ccw_btn)
 
         # Clockwise rotation button
-        cw_btn = QPushButton("CW ↷")
-        cw_btn.setStyleSheet(
-            "background-color: #FF9800; color: white; font-weight: bold; padding: 6px;"
+        self.cw_btn = QPushButton("CW ↷")
+        self.cw_btn.setStyleSheet(
+            "background-color: #888888; color: #cccccc; font-weight: bold; padding: 6px;"
         )
-        cw_btn.clicked.connect(self.rotate_view_cw)
-        view_control_layout.addWidget(cw_btn)
+        self.cw_btn.clicked.connect(self.rotate_view_cw)
+        self.cw_btn.setEnabled(False)
+        view_control_layout.addWidget(self.cw_btn)
 
         dock_layout.addLayout(view_control_layout)
 
@@ -276,6 +283,35 @@ class RoboWatchGUI(QMainWindow):
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
+
+    def _position_menu_on_largest_monitor(self):
+        """Position the menu window on the largest monitor (external monitor on laptop setup)"""
+        try:
+            from PyQt6.QtWidgets import QApplication
+
+            app = QApplication.instance()
+            screens = app.screens()
+
+            if not screens:
+                print("  ! No screens detected")
+                return
+
+            # Find the largest monitor (usually the external one)
+            largest_screen = max(screens, key=lambda s: s.geometry().width() * s.geometry().height())
+            largest_geom = largest_screen.geometry()
+
+            print(f"  ✓ Found {len(screens)} monitor(s)")
+            print(f"  ✓ Largest monitor: {largest_geom.width()}x{largest_geom.height()} at ({largest_geom.x()}, {largest_geom.y()})")
+
+            # Position menu window at top-left of largest monitor with some padding
+            menu_x = largest_geom.x() + 20
+            menu_y = largest_geom.y() + 50
+
+            self.move(menu_x, menu_y)
+            print(f"  ✓ Menu window positioned on largest monitor at ({menu_x}, {menu_y})")
+
+        except Exception as e:
+            print(f"  ! Error positioning menu window: {e}")
 
     def load_temp_file(self):
         """Load temporary debug file"""
@@ -392,21 +428,22 @@ class RoboWatchGUI(QMainWindow):
             print(f"    Focal Point: {self.saved_camera_state['focal_point']}")
             print(f"    Up: {self.saved_camera_state['up']}")
 
-            # Automatically activate top view mode on load (view is already top view, freeze it)
-            self.top_view_mode = True
+            # Keep top_view_mode as False on load - button starts disabled (gray)
+            # View is positioned at top, but interaction is NOT frozen until user clicks "Top"
+            self.top_view_mode = False
             self.top_btn.setStyleSheet(
-                "background-color: #4CAF50; color: white; font-weight: bold; padding: 6px; border-radius: 4px; border: 2px solid white;"
+                "background-color: #808080; color: white; font-weight: bold; padding: 6px; border-radius: 4px;"
             )
 
-            # Freeze the interaction immediately since we're in top view
+            # Allow interaction initially - user can click "Top" to freeze the view
             if hasattr(self.plotter, 'iren') and self.plotter.iren:
                 try:
-                    from vtkmodules.vtkInteractionStyle import vtkInteractorStyleNone
-                    frozen_style = vtkInteractorStyleNone()
-                    self.plotter.iren.SetInteractorStyle(frozen_style)
-                    print("  ✓ Top view mode ACTIVATED on load - interaction FROZEN")
+                    from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
+                    trackball_style = vtkInteractorStyleTrackballCamera()
+                    self.plotter.iren.SetInteractorStyle(trackball_style)
+                    print("  ✓ Interaction ENABLED on load - click 'Top' to freeze view")
                 except Exception as e:
-                    print(f"  ! Warning: Could not freeze interaction: {e}")
+                    print(f"  ! Warning: Could not set interaction style: {e}")
 
             # Render
             self.status_label.setText("Rendering...")
@@ -417,6 +454,10 @@ class RoboWatchGUI(QMainWindow):
             print("  ✓ Initializing interactor...")
             self.plotter.iren.initialize()
             print("  ✓ Interactor initialized - window should be visible now")
+
+            # Note on macOS: VTK windows cannot be repositioned after creation due to platform limitations
+            # The PyVista window may appear on a different monitor than the menu
+            # You can manually drag it to the desired monitor if needed
 
             self.status_label.setText("Done! Mesh displayed")
             print("\nMesh displayed in PyVista!")
@@ -472,19 +513,25 @@ class RoboWatchGUI(QMainWindow):
         """Toggle X axis visibility"""
         if self.plotter and 'x' in self.axis_actors:
             self.axis_actors['x'].SetVisibility(state != 0)
-            self.plotter.render()
+            # Force immediate render update
+            self.plotter.render_window.Render()
+            QApplication.instance().processEvents()
 
     def toggle_y_axis(self, state):
         """Toggle Y axis visibility"""
         if self.plotter and 'y' in self.axis_actors:
             self.axis_actors['y'].SetVisibility(state != 0)
-            self.plotter.render()
+            # Force immediate render update
+            self.plotter.render_window.Render()
+            QApplication.instance().processEvents()
 
     def toggle_z_axis(self, state):
         """Toggle Z axis visibility"""
         if self.plotter and 'z' in self.axis_actors:
             self.axis_actors['z'].SetVisibility(state != 0)
-            self.plotter.render()
+            # Force immediate render update
+            self.plotter.render_window.Render()
+            QApplication.instance().processEvents()
 
     def on_opacity_slider_change(self, value):
         """Handle opacity slider change (0-100)"""
@@ -544,7 +591,9 @@ class RoboWatchGUI(QMainWindow):
             self.mesh_actor.GetProperty().EdgeVisibilityOff()
             print("Mesh edges OFF")
 
-        self.plotter.render()
+        # Force immediate render update
+        self.plotter.render_window.Render()
+        QApplication.instance().processEvents()
 
     def toggle_top_view(self):
         """Toggle top view mode"""
@@ -554,15 +603,37 @@ class RoboWatchGUI(QMainWindow):
                 "background-color: #4CAF50; color: white; font-weight: bold; padding: 6px; border-radius: 4px; border: 2px solid white;"
             )
             self.top_btn.setText("Top")
+
+            # Enable CW/CCW buttons with active styling
+            self.cw_btn.setEnabled(True)
+            self.ccw_btn.setEnabled(True)
+            self.cw_btn.setStyleSheet(
+                "background-color: #FF9800; color: white; font-weight: bold; padding: 6px; border-radius: 4px;"
+            )
+            self.ccw_btn.setStyleSheet(
+                "background-color: #FF9800; color: white; font-weight: bold; padding: 6px; border-radius: 4px;"
+            )
+
             self.set_top_view()
-            print("Top View mode ON")
+            print("Top View mode ON - CW/CCW buttons enabled")
         else:
             self.top_btn.setStyleSheet(
                 "background-color: #808080; color: white; font-weight: bold; padding: 6px; border-radius: 4px;"
             )
             self.top_btn.setText("Top")
+
+            # Disable CW/CCW buttons with inactive styling
+            self.cw_btn.setEnabled(False)
+            self.ccw_btn.setEnabled(False)
+            self.cw_btn.setStyleSheet(
+                "background-color: #888888; color: #cccccc; font-weight: bold; padding: 6px; border-radius: 4px;"
+            )
+            self.ccw_btn.setStyleSheet(
+                "background-color: #888888; color: #cccccc; font-weight: bold; padding: 6px; border-radius: 4px;"
+            )
+
             self.restore_normal_view()
-            print("Top View mode OFF")
+            print("Top View mode OFF - CW/CCW buttons disabled")
 
     def set_top_view(self):
         """Set camera to top view - restore initial camera position and freeze interaction"""
@@ -601,39 +672,34 @@ class RoboWatchGUI(QMainWindow):
             traceback.print_exc()
 
     def rotate_view_cw(self):
-        """Rotate camera 90 degrees clockwise around Z axis"""
+        """Rotate view 90 degrees clockwise around Z axis by rotating the up vector"""
         if not self.top_view_mode or not self.plotter:
             return
 
         try:
-            # Get mesh center
-            mesh_center = self.current_mesh.center
-            bounds = self.current_mesh.bounds
-            mesh_size = max(bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4])
-
-            # Current camera position relative to mesh center
-            current_pos = np.array(self.plotter.camera.position)
-            relative_pos = current_pos - mesh_center
+            # Rotate the up vector 90 degrees clockwise around Z axis
+            # Initial up is typically (0, 1, 0) - rotate to (1, 0, 0)
+            current_up = np.array(self.plotter.camera.up)
 
             # Rotate around Z axis by -90 degrees (clockwise)
             angle = np.radians(-90)
             cos_a = np.cos(angle)
             sin_a = np.sin(angle)
-            rot_matrix = np.array([
-                [cos_a, -sin_a, 0],
-                [sin_a, cos_a, 0],
-                [0, 0, 1]
-            ])
-            rotated_pos = rot_matrix @ relative_pos
-            new_pos = mesh_center + rotated_pos
 
-            # Update camera position
-            self.plotter.camera.position = new_pos
-            self.plotter.camera.focal_point = mesh_center
-            self.plotter.camera.up = (0, 1, 0)
+            # Apply 2D rotation to X,Y components (Z stays the same)
+            new_up_x = current_up[0] * cos_a - current_up[1] * sin_a
+            new_up_y = current_up[0] * sin_a + current_up[1] * cos_a
+            new_up_z = current_up[2]
 
-            self.plotter.render()
-            print("Rotated CW")
+            new_up = (new_up_x, new_up_y, new_up_z)
+            self.plotter.camera.up = new_up
+
+            # Force immediate render update - use same approach as opacity/zoom sliders
+            self.plotter.render_window.Render()
+            QApplication.instance().processEvents()
+
+            print(f"Rotated CW (90 degrees clockwise)")
+            print(f"  New up vector: {self.plotter.camera.up}")
 
         except Exception as e:
             print(f"Error rotating CW: {e}")
@@ -641,39 +707,34 @@ class RoboWatchGUI(QMainWindow):
             traceback.print_exc()
 
     def rotate_view_ccw(self):
-        """Rotate camera 90 degrees counter-clockwise around Z axis"""
+        """Rotate view 90 degrees counter-clockwise around Z axis by rotating the up vector"""
         if not self.top_view_mode or not self.plotter:
             return
 
         try:
-            # Get mesh center
-            mesh_center = self.current_mesh.center
-            bounds = self.current_mesh.bounds
-            mesh_size = max(bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4])
-
-            # Current camera position relative to mesh center
-            current_pos = np.array(self.plotter.camera.position)
-            relative_pos = current_pos - mesh_center
+            # Rotate the up vector 90 degrees counter-clockwise around Z axis
+            # Initial up is typically (0, 1, 0) - rotate to (-1, 0, 0)
+            current_up = np.array(self.plotter.camera.up)
 
             # Rotate around Z axis by +90 degrees (counter-clockwise)
             angle = np.radians(90)
             cos_a = np.cos(angle)
             sin_a = np.sin(angle)
-            rot_matrix = np.array([
-                [cos_a, -sin_a, 0],
-                [sin_a, cos_a, 0],
-                [0, 0, 1]
-            ])
-            rotated_pos = rot_matrix @ relative_pos
-            new_pos = mesh_center + rotated_pos
 
-            # Update camera position
-            self.plotter.camera.position = new_pos
-            self.plotter.camera.focal_point = mesh_center
-            self.plotter.camera.up = (0, 1, 0)
+            # Apply 2D rotation to X,Y components (Z stays the same)
+            new_up_x = current_up[0] * cos_a - current_up[1] * sin_a
+            new_up_y = current_up[0] * sin_a + current_up[1] * cos_a
+            new_up_z = current_up[2]
 
-            self.plotter.render()
-            print("Rotated CCW")
+            new_up = (new_up_x, new_up_y, new_up_z)
+            self.plotter.camera.up = new_up
+
+            # Force immediate render update - use same approach as opacity/zoom sliders
+            self.plotter.render_window.Render()
+            QApplication.instance().processEvents()
+
+            print(f"Rotated CCW (90 degrees counter-clockwise)")
+            print(f"  New up vector: {self.plotter.camera.up}")
 
         except Exception as e:
             print(f"Error rotating CCW: {e}")
