@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QVBoxLayout,
                              QHBoxLayout, QWidget, QPushButton, QLabel, QListWidget,
-                             QListWidgetItem, QDockWidget, QCheckBox)
+                             QListWidgetItem, QDockWidget, QCheckBox, QSlider, QSpinBox)
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
 
@@ -158,25 +158,30 @@ class RoboWatchGUI(QMainWindow):
         mesh_label.setStyleSheet("margin-top: 15px; font-weight: bold;")
         dock_layout.addWidget(mesh_label)
 
-        # Mesh transparency buttons
-        trans_layout = QHBoxLayout()
+        # Opacity label
+        opacity_label = QLabel("Opacity: 90%")
+        opacity_label.setStyleSheet("font-size: 10px; color: #666;")
+        self.opacity_label = opacity_label
+        dock_layout.addWidget(opacity_label)
 
-        trans_btn = QPushButton("Transparent")
-        trans_btn.setStyleSheet("background-color: #2196F3; color: white; padding: 6px; font-size: 9px;")
-        trans_btn.clicked.connect(self.set_mesh_transparent)
-        trans_layout.addWidget(trans_btn)
+        # Opacity slider (0-100)
+        opacity_layout = QHBoxLayout()
+        opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        opacity_slider.setMinimum(0)
+        opacity_slider.setMaximum(100)
+        opacity_slider.setValue(90)
+        opacity_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        opacity_slider.setTickInterval(10)
+        opacity_slider.valueChanged.connect(self.on_opacity_slider_change)
+        self.opacity_slider = opacity_slider
+        opacity_layout.addWidget(opacity_slider)
+        dock_layout.addLayout(opacity_layout)
 
-        opaque_btn = QPushButton("Opaque")
-        opaque_btn.setStyleSheet("background-color: #666; color: white; padding: 6px; font-size: 9px;")
-        opaque_btn.clicked.connect(self.set_mesh_opaque)
-        trans_layout.addWidget(opaque_btn)
-
+        # Edges button
         edges_btn = QPushButton("Edges")
         edges_btn.setStyleSheet("background-color: #FF5722; color: white; padding: 6px; font-size: 9px;")
         edges_btn.clicked.connect(self.toggle_mesh_edges)
-        trans_layout.addWidget(edges_btn)
-
-        dock_layout.addLayout(trans_layout)
+        dock_layout.addWidget(edges_btn)
 
         # Add stretch to bottom
         dock_layout.addStretch()
@@ -394,25 +399,19 @@ class RoboWatchGUI(QMainWindow):
             self.axis_actors['z'].SetVisibility(state != 0)
             self.plotter.render()
 
-    def set_mesh_transparent(self):
-        """Make mesh transparent to see internal details"""
+    def on_opacity_slider_change(self, value):
+        """Handle opacity slider change (0-100)"""
         if not self.plotter or not self.mesh_actor:
             return
 
-        self.mesh_opacity = 0.3
+        # Convert 0-100 slider value to 0.0-1.0 opacity
+        self.mesh_opacity = value / 100.0
         self.mesh_actor.GetProperty().SetOpacity(self.mesh_opacity)
         self.plotter.render()
-        print(f"Mesh opacity set to {self.mesh_opacity * 100}%")
 
-    def set_mesh_opaque(self):
-        """Make mesh fully opaque"""
-        if not self.plotter or not self.mesh_actor:
-            return
-
-        self.mesh_opacity = 1.0
-        self.mesh_actor.GetProperty().SetOpacity(self.mesh_opacity)
-        self.plotter.render()
-        print(f"Mesh opacity set to {self.mesh_opacity * 100}%")
+        # Update label
+        self.opacity_label.setText(f"Opacity: {value}%")
+        print(f"Mesh opacity set to {value}%")
 
     def toggle_mesh_edges(self):
         """Toggle mesh edges visibility"""
