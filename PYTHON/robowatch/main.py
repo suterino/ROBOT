@@ -34,10 +34,9 @@ class RoboWatchGUI(QMainWindow):
 
         central_widget.setLayout(layout)
 
-        # Create PyVista plotter with its own window
-        # This will open in a separate window, not embedded in Qt
-        self.plotter = pv.Plotter(off_screen=False)
-        self.plotter.background_color = 'white'
+        # Don't create plotter yet - create it when mesh is loaded
+        # This avoids creating an empty window upfront
+        self.plotter = None
 
         # Setup menu bar
         self.create_menu_bar()
@@ -247,26 +246,39 @@ class RoboWatchGUI(QMainWindow):
             return
 
         try:
+            # Create plotter if it doesn't exist
+            if self.plotter is None:
+                print("Creating PyVista plotter window...")
+                self.plotter = pv.Plotter(off_screen=False)
+                self.plotter.background_color = 'white'
+                print("  ✓ PyVista window created")
+
             # Clear previous mesh
             self.plotter.clear()
+            print("  ✓ Previous mesh cleared")
 
             # Add mesh
+            print("  ✓ Adding mesh to plotter...")
             self.mesh_actor = self.plotter.add_mesh(
                 self.current_mesh,
                 color=(0.5, 0.8, 1.0),
                 opacity=0.9
             )
+            print("  ✓ Mesh added")
 
             # Create and display axes
+            print("  ✓ Creating axes...")
             self.create_axes()
 
             # Fit camera to mesh
+            print("  ✓ Fitting camera to mesh...")
             self.plotter.reset_camera()
 
             # Render
+            print("  ✓ Rendering mesh...")
             self.plotter.render()
 
-            print("Mesh displayed in PyVista")
+            print("\nMesh displayed in PyVista!")
             print("Controls:")
             print("  - Rotate: Left-click and drag")
             print("  - Zoom: Scroll wheel or right-click drag")
@@ -316,19 +328,19 @@ class RoboWatchGUI(QMainWindow):
 
     def toggle_x_axis(self, state):
         """Toggle X axis visibility"""
-        if 'x' in self.axis_actors:
+        if self.plotter and 'x' in self.axis_actors:
             self.axis_actors['x'].SetVisibility(state != 0)
             self.plotter.render()
 
     def toggle_y_axis(self, state):
         """Toggle Y axis visibility"""
-        if 'y' in self.axis_actors:
+        if self.plotter and 'y' in self.axis_actors:
             self.axis_actors['y'].SetVisibility(state != 0)
             self.plotter.render()
 
     def toggle_z_axis(self, state):
         """Toggle Z axis visibility"""
-        if 'z' in self.axis_actors:
+        if self.plotter and 'z' in self.axis_actors:
             self.axis_actors['z'].SetVisibility(state != 0)
             self.plotter.render()
 
@@ -352,6 +364,10 @@ class RoboWatchGUI(QMainWindow):
 
     def set_top_view(self):
         """Set camera to top view - looking straight down Z axis"""
+        if not self.plotter or not self.current_mesh:
+            print("Error: No mesh loaded. Click 'load temp' first.")
+            return
+
         try:
             # Get mesh center
             mesh_center = self.current_mesh.center
@@ -384,7 +400,7 @@ class RoboWatchGUI(QMainWindow):
 
     def rotate_view_cw(self):
         """Rotate camera 90 degrees clockwise around Z axis"""
-        if not self.top_view_mode:
+        if not self.top_view_mode or not self.plotter:
             return
 
         try:
@@ -424,7 +440,7 @@ class RoboWatchGUI(QMainWindow):
 
     def rotate_view_ccw(self):
         """Rotate camera 90 degrees counter-clockwise around Z axis"""
-        if not self.top_view_mode:
+        if not self.top_view_mode or not self.plotter:
             return
 
         try:
@@ -464,6 +480,9 @@ class RoboWatchGUI(QMainWindow):
 
     def restore_normal_view(self):
         """Restore normal interactive view"""
+        if not self.plotter:
+            return
+
         try:
             # Reset camera
             self.plotter.reset_camera()
