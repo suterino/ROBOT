@@ -5,7 +5,11 @@
       "Bash(source ~/.bashrc)",
       "Bash(source ~/.zshrc)",
       "Bash(mamba install:*)",
-      "Bash(conda run:*)"
+      "Bash(conda run:*)",
+      "Read(//Users/massimo/GitHub/ROBOT/PYTHON/**)",
+      "Bash(find:*)",
+      "Bash(pip install:*)",
+      "Bash(python -m py_compile:*)"
     ],
     "deny": [],
     "ask": []
