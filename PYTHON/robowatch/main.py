@@ -52,6 +52,7 @@ class RoboWatchGUI(QMainWindow):
         self.top_view_mode = False
         self.mesh_edges_visible = False
         self.mesh_opacity = 0.9
+        self.zoom_level = 1.0  # Default zoom level
 
         # Store camera positions for view control
         self.saved_camera_state = None
@@ -169,6 +170,30 @@ class RoboWatchGUI(QMainWindow):
         view_control_layout.addWidget(cw_btn)
 
         dock_layout.addLayout(view_control_layout)
+
+        # Camera Control label
+        camera_label = QLabel("Camera Control:")
+        camera_label.setStyleSheet("margin-top: 15px; font-weight: bold;")
+        dock_layout.addWidget(camera_label)
+
+        # Zoom label
+        zoom_label = QLabel("Zoom: 1.0x")
+        zoom_label.setStyleSheet("font-size: 10px; color: #666;")
+        self.zoom_label = zoom_label
+        dock_layout.addWidget(zoom_label)
+
+        # Zoom slider (0.1x to 5x)
+        zoom_layout = QHBoxLayout()
+        zoom_slider = QSlider(Qt.Orientation.Horizontal)
+        zoom_slider.setMinimum(10)  # 0.1x
+        zoom_slider.setMaximum(500)  # 5.0x
+        zoom_slider.setValue(100)  # 1.0x (default)
+        zoom_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        zoom_slider.setTickInterval(50)
+        zoom_slider.valueChanged.connect(self.on_zoom_slider_change)
+        self.zoom_slider = zoom_slider
+        zoom_layout.addWidget(zoom_slider)
+        dock_layout.addLayout(zoom_layout)
 
         # Mesh Display label
         mesh_label = QLabel("Mesh Display:")
@@ -429,6 +454,28 @@ class RoboWatchGUI(QMainWindow):
         # Update label
         self.opacity_label.setText(f"Opacity: {value}%")
         print(f"Mesh opacity set to {value}%")
+
+    def on_zoom_slider_change(self, value):
+        """Handle zoom slider change (10-500 = 0.1x-5.0x)"""
+        if not self.plotter:
+            return
+
+        # Convert slider value (10-500) to zoom factor (0.1-5.0)
+        target_zoom = value / 100.0
+
+        # Calculate the zoom factor needed to achieve this
+        zoom_factor = target_zoom / self.zoom_level
+
+        # Apply the zoom
+        self.plotter.camera.zoom(zoom_factor)
+        self.plotter.render()
+
+        # Update state
+        self.zoom_level = target_zoom
+
+        # Update label
+        self.zoom_label.setText(f"Zoom: {target_zoom:.1f}x")
+        print(f"Zoom set to {target_zoom:.1f}x")
 
     def toggle_mesh_edges(self):
         """Toggle mesh edges visibility"""
