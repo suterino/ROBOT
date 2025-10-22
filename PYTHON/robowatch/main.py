@@ -163,6 +163,11 @@ class RoboWatchGUI(QMainWindow):
         temp_btn.clicked.connect(self.load_temp_file)
         dock_layout.addWidget(temp_btn)
 
+        # Status label
+        self.status_label = QLabel("Ready")
+        self.status_label.setStyleSheet("font-size: 10px; color: #666; padding: 5px; background: #f5f5f5; border-radius: 3px;")
+        dock_layout.addWidget(self.status_label)
+
         # Info label
         info_label = QLabel("Click 'Start' then click on\nthe mesh to add points")
         info_label.setStyleSheet("font-size: 10px; color: gray;")
@@ -197,6 +202,8 @@ class RoboWatchGUI(QMainWindow):
 
     def load_temp_file(self):
         """Load temporary debug file"""
+        self.status_label.setText("Loading temp file...")
+        print("load_temp_file() called")
         file_path = "/Users/massimo/GitHub/ROBOT/PYTHON/robowatch/STL/watch_case_rebuiding_v24_v1.stl"
         self._load_stl(file_path)
 
@@ -218,12 +225,14 @@ class RoboWatchGUI(QMainWindow):
     def _load_stl(self, file_path):
         """Internal method to load STL file"""
         try:
+            self.status_label.setText("Reading STL file...")
             print(f"Loading: {file_path}")
 
             # Load mesh using PyVista
             self.current_mesh = pv.read(file_path)
             self.original_mesh = self.current_mesh.copy()
 
+            self.status_label.setText("Mesh loaded, creating viewer...")
             print(f"Mesh loaded successfully")
             print(f"Mesh bounds: {self.current_mesh.bounds}")
 
@@ -232,10 +241,12 @@ class RoboWatchGUI(QMainWindow):
 
             # Update window title
             self.setWindowTitle(f"RoboWatch - {Path(file_path).name}")
+            self.status_label.setText("Mesh ready! Check PyVista window")
 
             print("Mesh displayed successfully")
 
         except Exception as e:
+            self.status_label.setText(f"Error: {str(e)[:50]}")
             print(f"Error loading file: {e}")
             import traceback
             traceback.print_exc()
@@ -248,6 +259,7 @@ class RoboWatchGUI(QMainWindow):
         try:
             # Create plotter if it doesn't exist
             if self.plotter is None:
+                self.status_label.setText("Creating PyVista window...")
                 print("Creating PyVista plotter window...")
                 self.plotter = pv.Plotter(off_screen=False)
                 self.plotter.background_color = 'white'
@@ -255,9 +267,11 @@ class RoboWatchGUI(QMainWindow):
 
             # Clear previous mesh
             self.plotter.clear()
+            self.status_label.setText("Clearing old mesh...")
             print("  ✓ Previous mesh cleared")
 
             # Add mesh
+            self.status_label.setText("Adding mesh...")
             print("  ✓ Adding mesh to plotter...")
             self.mesh_actor = self.plotter.add_mesh(
                 self.current_mesh,
@@ -267,17 +281,21 @@ class RoboWatchGUI(QMainWindow):
             print("  ✓ Mesh added")
 
             # Create and display axes
+            self.status_label.setText("Creating axes...")
             print("  ✓ Creating axes...")
             self.create_axes()
 
             # Fit camera to mesh
+            self.status_label.setText("Fitting camera...")
             print("  ✓ Fitting camera to mesh...")
             self.plotter.reset_camera()
 
             # Render
+            self.status_label.setText("Rendering...")
             print("  ✓ Rendering mesh...")
             self.plotter.render()
 
+            self.status_label.setText("Done! Mesh displayed")
             print("\nMesh displayed in PyVista!")
             print("Controls:")
             print("  - Rotate: Left-click and drag")
@@ -285,6 +303,7 @@ class RoboWatchGUI(QMainWindow):
             print("  - Pan: Middle-click and drag")
 
         except Exception as e:
+            self.status_label.setText(f"Error: {str(e)[:40]}")
             print(f"Error displaying mesh: {e}")
             import traceback
             traceback.print_exc()
