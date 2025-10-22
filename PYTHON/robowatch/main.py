@@ -385,11 +385,18 @@ class RoboWatchGUI(QMainWindow):
             # Re-enable interactive mode
             self.view.interactive = True
 
-            # Reset rotation matrix (mesh is already rotated and stays that way)
+            # Restore the original mesh to clean state
+            # This ensures that if the user rotates the camera and clicks Top again,
+            # everything is in a consistent state
+            if self.original_mesh is not None:
+                self.current_mesh = self.original_mesh.copy()
+                self.display_mesh_vispy()
+
+            # Reset rotation matrix
             self.current_rotation_matrix = None
 
             self.canvas.update()
-            print("Top View mode OFF - Normal interaction enabled (mesh position kept)")
+            print("Top View mode OFF - Normal interaction enabled (mesh restored to original)")
 
     def set_top_view(self):
         """Set top view - rotate mesh so Z toward viewer, Y up, X right"""
