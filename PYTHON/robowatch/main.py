@@ -1,19 +1,13 @@
 import sys
-import os
 from pathlib import Path
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QVBoxLayout,
                              QHBoxLayout, QWidget, QPushButton, QLabel, QListWidget,
                              QListWidgetItem, QDockWidget, QCheckBox)
 from PyQt6.QtGui import QAction
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 
 import numpy as np
-import trimesh
-from vispy import scene, app
-from vispy.scene import Mesh, Markers, Line
-from vispy.geometry import MeshData
-from vispy.color import Color
-from vispy.util.transforms import perspective, translate, rotate as vispy_rotate
+import pyvista as pv
 
 print("Imports successful")
 
@@ -29,28 +23,21 @@ class RoboWatchGUI(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(5, 5, 5, 5)
 
-        # Create Vispy canvas
-        self.canvas = scene.SceneCanvas(keys='interactive', show=False)
-        self.view = self.canvas.central_widget.add_view()
+        # Add info label about PyVista window
+        info = QLabel("3D View: PyVista opens in a separate window\nUse controls below to manage the view")
+        info.setStyleSheet("color: #666; font-size: 10px; padding: 10px; background: #f0f0f0; border-radius: 4px;")
+        layout.addWidget(info)
 
-        # Set up camera with arcball for interactive navigation
-        self.view.camera = 'arcball'
-
-        # Enable mouse wheel zoom
-        self.view.camera.set_range()
-
-        # Bind keyboard and mouse events
-        self.canvas.events.key_press.connect(self.on_key_press)
-        self.canvas.events.mouse_press.connect(self.on_mouse_press)
-        self.canvas.events.mouse_move.connect(self.on_mouse_move)
-
-        # Convert canvas to Qt widget
-        native_canvas = self.canvas.native
-        layout.addWidget(native_canvas)
+        layout.addStretch()
 
         central_widget.setLayout(layout)
+
+        # Create PyVista plotter with its own window
+        # This will open in a separate window, not embedded in Qt
+        self.plotter = pv.Plotter(off_screen=False)
+        self.plotter.background_color = 'white'
 
         # Setup menu bar
         self.create_menu_bar()
@@ -58,19 +45,18 @@ class RoboWatchGUI(QMainWindow):
         # Create left dock panel
         self.create_left_panel()
 
+        # Initialize state variables
         self.current_mesh = None
-        self.original_mesh = None  # Store original mesh before any rotations
+        self.original_mesh = None
         self.mesh_actor = None
+        self.axis_actors = {}  # Store axis actors
         self.markers_actor = None
-        self.preview_marker = None
-        self.axis_x_line = None
-        self.axis_y_line = None
-        self.axis_z_line = None
         self.picked_points = []
         self.point_picking_mode = False
         self.top_view_mode = False
-        self.current_rotation = 0  # Track rotation in degrees (0, 90, 180, 270)
-        self.current_rotation_matrix = None  # Store current rotation matrix to apply to axes
+
+        # Store camera positions for view control
+        self.saved_camera_state = None
 
         print("RoboWatchGUI initialization complete")
 
@@ -142,7 +128,7 @@ class RoboWatchGUI(QMainWindow):
         # Horizontal layout for Top button and rotation controls
         view_control_layout = QHBoxLayout()
 
-        # Top view button (small, like a radio button)
+        # Top view button
         self.top_btn = QPushButton("Top")
         self.top_btn.setMaximumWidth(50)
         self.top_btn.setStyleSheet(
@@ -235,18 +221,15 @@ class RoboWatchGUI(QMainWindow):
         try:
             print(f"Loading: {file_path}")
 
-            # Load mesh using trimesh
-            self.current_mesh = trimesh.load(file_path)
-
-            # Store a copy of the original mesh for rotation reference
+            # Load mesh using PyVista
+            self.current_mesh = pv.read(file_path)
             self.original_mesh = self.current_mesh.copy()
 
             print(f"Mesh loaded successfully")
             print(f"Mesh bounds: {self.current_mesh.bounds}")
-            print(f"Mesh volume: {self.current_mesh.volume}")
 
-            # Display the mesh with Vispy
-            self.display_mesh_vispy()
+            # Display the mesh
+            self.display_mesh()
 
             # Update window title
             self.setWindowTitle(f"RoboWatch - {Path(file_path).name}")
@@ -258,114 +241,96 @@ class RoboWatchGUI(QMainWindow):
             import traceback
             traceback.print_exc()
 
-    def display_mesh_vispy(self):
-        """Display the mesh using Vispy"""
+    def display_mesh(self):
+        """Display the mesh using PyVista"""
         if self.current_mesh is None:
             return
 
-        # Clear previous mesh
-        if self.mesh_actor is not None:
-            self.mesh_actor.parent = None
+        try:
+            # Clear previous mesh
+            self.plotter.clear()
 
-        mesh = self.current_mesh
-        vertices = mesh.vertices.astype(np.float32)
-        faces = mesh.faces.astype(np.uint32)
+            # Add mesh
+            self.mesh_actor = self.plotter.add_mesh(
+                self.current_mesh,
+                color=(0.5, 0.8, 1.0),
+                opacity=0.9
+            )
 
-        # Create MeshData from vertices and faces
-        mesh_data = MeshData(
-            vertices=vertices,
-            faces=faces
-        )
+            # Create and display axes
+            self.create_axes()
 
-        # Create mesh actor
-        self.mesh_actor = Mesh(
-            meshdata=mesh_data,
-            color=(0.5, 0.8, 1.0, 0.9),
-            shading='flat'
-        )
+            # Fit camera to mesh
+            self.plotter.reset_camera()
 
-        self.view.add(self.mesh_actor)
+            # Render
+            self.plotter.render()
 
-        # Center and fit camera
-        mesh_center = mesh.centroid
-        mesh_bounds = mesh.bounds
-        mesh_size = np.max(mesh_bounds[1] - mesh_bounds[0])
+            print("Mesh displayed in PyVista")
+            print("Controls:")
+            print("  - Rotate: Left-click and drag")
+            print("  - Zoom: Scroll wheel or right-click drag")
+            print("  - Pan: Middle-click and drag")
 
-        # Set camera to view the mesh
-        self.view.camera.center = mesh_center
-        self.view.camera.distance = mesh_size * 1.5
+        except Exception as e:
+            print(f"Error displaying mesh: {e}")
+            import traceback
+            traceback.print_exc()
 
-        # Create and display axes (with rotation if in top view mode)
-        self.create_axes(mesh_center, mesh_size * 0.3, self.current_rotation_matrix)
+    def create_axes(self):
+        """Create and display X, Y, Z axes"""
+        try:
+            # Clear previous axes
+            for axis_name in ['x', 'y', 'z']:
+                if axis_name in self.axis_actors:
+                    self.plotter.remove_actor(self.axis_actors[axis_name])
+            self.axis_actors = {}
 
-        print("Mesh displayed in Vispy")
-        print("Controls:")
-        print("  - Rotate: Left-click and drag")
-        print("  - Zoom: Right-click drag up/down OR Scroll wheel OR +/- keys")
-        print("  - Pan: Middle-click and drag")
-        print("  - Reset: Press 'Home' or 'r' key")
+            # Get mesh center and size for axis scaling
+            mesh_center = self.current_mesh.center
+            bounds = self.current_mesh.bounds
+            mesh_size = max(bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4])
+            axis_length = mesh_size * 0.3
 
-    def create_axes(self, origin, axis_length, rotation_matrix=None):
-        """Create and display X, Y, Z axes with optional rotation"""
-        # Clear previous axes
-        if self.axis_x_line is not None:
-            self.axis_x_line.parent = None
-        if self.axis_y_line is not None:
-            self.axis_y_line.parent = None
-        if self.axis_z_line is not None:
-            self.axis_z_line.parent = None
+            # X axis (red)
+            x_points = [mesh_center, mesh_center + np.array([axis_length, 0, 0])]
+            x_line = pv.Line(x_points[0], x_points[1])
+            self.axis_actors['x'] = self.plotter.add_mesh(x_line, color='red', line_width=3)
 
-        # Define axis directions
-        x_dir = np.array([axis_length, 0, 0])
-        y_dir = np.array([0, axis_length, 0])
-        z_dir = np.array([0, 0, axis_length])
+            # Y axis (green)
+            y_points = [mesh_center, mesh_center + np.array([0, axis_length, 0])]
+            y_line = pv.Line(y_points[0], y_points[1])
+            self.axis_actors['y'] = self.plotter.add_mesh(y_line, color='green', line_width=3)
 
-        # Apply rotation if provided
-        if rotation_matrix is not None:
-            x_dir = x_dir @ rotation_matrix.T
-            y_dir = y_dir @ rotation_matrix.T
-            z_dir = z_dir @ rotation_matrix.T
+            # Z axis (blue)
+            z_points = [mesh_center, mesh_center + np.array([0, 0, axis_length])]
+            z_line = pv.Line(z_points[0], z_points[1])
+            self.axis_actors['z'] = self.plotter.add_mesh(z_line, color='blue', line_width=3)
 
-        # X axis (red)
-        x_points = np.array([
-            origin,
-            origin + x_dir
-        ])
-        self.axis_x_line = Line(pos=x_points, color='red', width=2, parent=self.view.scene)
+            print("Axes created: Red=X, Green=Y, Blue=Z")
 
-        # Y axis (green)
-        y_points = np.array([
-            origin,
-            origin + y_dir
-        ])
-        self.axis_y_line = Line(pos=y_points, color='green', width=2, parent=self.view.scene)
-
-        # Z axis (blue)
-        z_points = np.array([
-            origin,
-            origin + z_dir
-        ])
-        self.axis_z_line = Line(pos=z_points, color='blue', width=2, parent=self.view.scene)
-
-        print("Axes created: Red=X, Green=Y, Blue=Z")
+        except Exception as e:
+            print(f"Error creating axes: {e}")
+            import traceback
+            traceback.print_exc()
 
     def toggle_x_axis(self, state):
         """Toggle X axis visibility"""
-        if self.axis_x_line is not None:
-            self.axis_x_line.parent = self.view.scene if state else None
-            self.canvas.update()
+        if 'x' in self.axis_actors:
+            self.axis_actors['x'].SetVisibility(state != 0)
+            self.plotter.render()
 
     def toggle_y_axis(self, state):
         """Toggle Y axis visibility"""
-        if self.axis_y_line is not None:
-            self.axis_y_line.parent = self.view.scene if state else None
-            self.canvas.update()
+        if 'y' in self.axis_actors:
+            self.axis_actors['y'].SetVisibility(state != 0)
+            self.plotter.render()
 
     def toggle_z_axis(self, state):
         """Toggle Z axis visibility"""
-        if self.axis_z_line is not None:
-            self.axis_z_line.parent = self.view.scene if state else None
-            self.canvas.update()
+        if 'z' in self.axis_actors:
+            self.axis_actors['z'].SetVisibility(state != 0)
+            self.plotter.render()
 
     def toggle_top_view(self):
         """Toggle top view mode"""
@@ -376,82 +341,41 @@ class RoboWatchGUI(QMainWindow):
             )
             self.top_btn.setText("Top")
             self.set_top_view()
-            print("Top View mode ON - Axes frozen, zoom in/out still working")
+            print("Top View mode ON")
         else:
             self.top_btn.setStyleSheet(
                 "background-color: #808080; color: white; font-weight: bold; padding: 6px; border-radius: 4px;"
             )
             self.top_btn.setText("Top")
-            # Re-enable interactive mode
-            self.view.interactive = True
-
-            # Restore the original mesh to clean state
-            # This ensures that if the user rotates the camera and clicks Top again,
-            # everything is in a consistent state
-            if self.original_mesh is not None:
-                self.current_mesh = self.original_mesh.copy()
-                self.display_mesh_vispy()
-
-            # Reset rotation matrix
-            self.current_rotation_matrix = None
-
-            self.canvas.update()
-            print("Top View mode OFF - Normal interaction enabled (mesh restored to original)")
+            self.restore_normal_view()
+            print("Top View mode OFF")
 
     def set_top_view(self):
-        """Set top view - rotate mesh so Z toward viewer, Y up, X right"""
-        if self.current_mesh is None or self.original_mesh is None:
-            return
-
+        """Set camera to top view - looking straight down Z axis"""
         try:
-            print("Setting top view...")
+            # Get mesh center
+            mesh_center = self.current_mesh.center
 
-            # Create rotation matrix: +90 degrees around X axis
-            # This makes:
-            # - Z point toward viewer (from pointing away)
-            # - Y stay pointing up
-            # - X stay pointing right
-            angle_x = np.radians(90)
-            cos_x = np.cos(angle_x)
-            sin_x = np.sin(angle_x)
+            # Position camera on Z axis looking down at mesh center
+            bounds = self.current_mesh.bounds
+            mesh_size = max(bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4])
+            camera_distance = mesh_size * 2.0
 
-            # Rotation matrix around X axis (3x3)
-            rot_matrix = np.array([
-                [1, 0, 0],
-                [0, cos_x, -sin_x],
-                [0, sin_x, cos_x]
-            ], dtype=np.float32)
+            # Set camera position (on Z axis, above the object)
+            self.plotter.camera.position = (
+                mesh_center[0],
+                mesh_center[1],
+                mesh_center[2] + camera_distance
+            )
 
-            # Store rotation matrix for axes visualization
-            self.current_rotation_matrix = rot_matrix
+            # Set focal point to mesh center
+            self.plotter.camera.focal_point = mesh_center
 
-            # Apply rotation to mesh vertices
-            self.current_mesh = self.original_mesh.copy()
-            rotated_vertices = self.current_mesh.vertices @ rot_matrix.T
-            self.current_mesh.vertices = rotated_vertices
+            # Set view up direction (Y pointing up)
+            self.plotter.camera.up = (0, 1, 0)
 
-            print("Mesh vertices rotated +90 degrees around X axis")
-
-            # Redisplay mesh with rotated axes
-            self.display_mesh_vispy()
-
-            # Set up camera for top view
-            mesh_center = self.current_mesh.centroid
-            mesh_bounds = self.current_mesh.bounds
-            mesh_size = np.max(mesh_bounds[1] - mesh_bounds[0])
-
-            # Reset camera to normal state
-            self.view.camera.transform.reset()
-            self.view.camera.center = mesh_center
-            self.view.camera.distance = mesh_size * 2.0
-
-            # Disable interactive camera rotation
-            self.view.interactive = False
-            print("Camera interactive mode disabled")
-
-            self.current_rotation = 0  # Reset rotation counter
-            self.canvas.update()
-            print("Top view set - mesh rotated so Z points toward viewer, Y up, X right, axes stay relative to object")
+            self.plotter.render()
+            print("Top view set - camera on Z axis looking at origin, Y up, X right")
 
         except Exception as e:
             print(f"Error setting top view: {e}")
@@ -459,104 +383,95 @@ class RoboWatchGUI(QMainWindow):
             traceback.print_exc()
 
     def rotate_view_cw(self):
-        """Rotate mesh 90 degrees clockwise (around Z axis) in top view"""
-        if not self.top_view_mode or self.current_mesh is None:
+        """Rotate camera 90 degrees clockwise around Z axis"""
+        if not self.top_view_mode:
             return
 
         try:
-            # Update rotation counter
-            self.current_rotation = (self.current_rotation + 90) % 360
+            # Get mesh center
+            mesh_center = self.current_mesh.center
+            bounds = self.current_mesh.bounds
+            mesh_size = max(bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4])
 
-            # Create combined rotation: X rotation (for top view) + Z rotation (for user rotation)
-            # X-axis rotation (+90 degrees for top view)
-            angle_x = np.radians(90)
-            cos_x = np.cos(angle_x)
-            sin_x = np.sin(angle_x)
-            rot_x = np.array([
-                [1, 0, 0],
-                [0, cos_x, -sin_x],
-                [0, sin_x, cos_x]
-            ], dtype=np.float32)
+            # Current camera position relative to mesh center
+            current_pos = np.array(self.plotter.camera.position)
+            relative_pos = current_pos - mesh_center
 
-            # Z-axis rotation (clockwise is negative)
-            angle_z = np.radians(-self.current_rotation)
-            cos_z = np.cos(angle_z)
-            sin_z = np.sin(angle_z)
-            rot_z = np.array([
-                [cos_z, -sin_z, 0],
-                [sin_z, cos_z, 0],
+            # Rotate around Z axis by -90 degrees (clockwise)
+            angle = np.radians(-90)
+            cos_a = np.cos(angle)
+            sin_a = np.sin(angle)
+            rot_matrix = np.array([
+                [cos_a, -sin_a, 0],
+                [sin_a, cos_a, 0],
                 [0, 0, 1]
-            ], dtype=np.float32)
+            ])
+            rotated_pos = rot_matrix @ relative_pos
+            new_pos = mesh_center + rotated_pos
 
-            # Combine: apply Z rotation first, then X rotation
-            combined = rot_x @ rot_z
+            # Update camera position
+            self.plotter.camera.position = new_pos
+            self.plotter.camera.focal_point = mesh_center
+            self.plotter.camera.up = (0, 1, 0)
 
-            # Store rotation matrix
-            self.current_rotation_matrix = combined
+            self.plotter.render()
+            print("Rotated CW")
 
-            # Apply rotation to mesh vertices
-            self.current_mesh = self.original_mesh.copy()
-            rotated_vertices = self.current_mesh.vertices @ combined.T
-            self.current_mesh.vertices = rotated_vertices
-
-            # Redisplay mesh with rotated axes
-            self.display_mesh_vispy()
-
-            self.canvas.update()
-            print(f"Rotated CW: {self.current_rotation}°")
         except Exception as e:
             print(f"Error rotating CW: {e}")
             import traceback
             traceback.print_exc()
 
     def rotate_view_ccw(self):
-        """Rotate mesh 90 degrees counter-clockwise (around Z axis) in top view"""
-        if not self.top_view_mode or self.current_mesh is None:
+        """Rotate camera 90 degrees counter-clockwise around Z axis"""
+        if not self.top_view_mode:
             return
 
         try:
-            # Update rotation counter
-            self.current_rotation = (self.current_rotation - 90) % 360
+            # Get mesh center
+            mesh_center = self.current_mesh.center
+            bounds = self.current_mesh.bounds
+            mesh_size = max(bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4])
 
-            # Create combined rotation: X rotation (for top view) + Z rotation (for user rotation)
-            # X-axis rotation (+90 degrees for top view)
-            angle_x = np.radians(90)
-            cos_x = np.cos(angle_x)
-            sin_x = np.sin(angle_x)
-            rot_x = np.array([
-                [1, 0, 0],
-                [0, cos_x, -sin_x],
-                [0, sin_x, cos_x]
-            ], dtype=np.float32)
+            # Current camera position relative to mesh center
+            current_pos = np.array(self.plotter.camera.position)
+            relative_pos = current_pos - mesh_center
 
-            # Z-axis rotation
-            angle_z = np.radians(-self.current_rotation)
-            cos_z = np.cos(angle_z)
-            sin_z = np.sin(angle_z)
-            rot_z = np.array([
-                [cos_z, -sin_z, 0],
-                [sin_z, cos_z, 0],
+            # Rotate around Z axis by +90 degrees (counter-clockwise)
+            angle = np.radians(90)
+            cos_a = np.cos(angle)
+            sin_a = np.sin(angle)
+            rot_matrix = np.array([
+                [cos_a, -sin_a, 0],
+                [sin_a, cos_a, 0],
                 [0, 0, 1]
-            ], dtype=np.float32)
+            ])
+            rotated_pos = rot_matrix @ relative_pos
+            new_pos = mesh_center + rotated_pos
 
-            # Combine: apply Z rotation first, then X rotation
-            combined = rot_x @ rot_z
+            # Update camera position
+            self.plotter.camera.position = new_pos
+            self.plotter.camera.focal_point = mesh_center
+            self.plotter.camera.up = (0, 1, 0)
 
-            # Store rotation matrix
-            self.current_rotation_matrix = combined
+            self.plotter.render()
+            print("Rotated CCW")
 
-            # Apply rotation to mesh vertices
-            self.current_mesh = self.original_mesh.copy()
-            rotated_vertices = self.current_mesh.vertices @ combined.T
-            self.current_mesh.vertices = rotated_vertices
-
-            # Redisplay mesh with rotated axes
-            self.display_mesh_vispy()
-
-            self.canvas.update()
-            print(f"Rotated CCW: {self.current_rotation}°")
         except Exception as e:
             print(f"Error rotating CCW: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def restore_normal_view(self):
+        """Restore normal interactive view"""
+        try:
+            # Reset camera
+            self.plotter.reset_camera()
+            self.plotter.render()
+            print("Normal view restored")
+
+        except Exception as e:
+            print(f"Error restoring normal view: {e}")
             import traceback
             traceback.print_exc()
 
@@ -568,172 +483,39 @@ class RoboWatchGUI(QMainWindow):
                 "background-color: #f44336; color: white; font-weight: bold; padding: 8px;"
             )
             self.start_btn.setText("Stop")
-            print("Point picking mode ON - Move mouse over mesh to see preview, click to add points")
+            print("Point picking mode ON")
+            # TODO: Implement point picking with PyVista
         else:
             self.start_btn.setStyleSheet(
                 "background-color: #4CAF50; color: white; font-weight: bold; padding: 8px;"
             )
             self.start_btn.setText("Start")
             print("Point picking mode OFF")
-            # Clear preview marker
-            if self.preview_marker is not None:
-                self.preview_marker.parent = None
-                self.preview_marker = None
-
-    def compute_ray_intersection(self, x, y):
-        """Compute ray intersection with mesh at screen coordinates (x, y)"""
-        if self.current_mesh is None:
-            return None
-
-        try:
-            size = self.canvas.size
-            camera = self.view.camera
-
-            # Get camera properties
-            cam_center = np.array(camera.center)
-            cam_distance = camera.distance
-
-            # Normalize screen coordinates to -1 to 1
-            norm_x = (2.0 * x) / size[0] - 1.0
-            norm_y = 1.0 - (2.0 * y) / size[1]
-
-            # Simple ray computation
-            ray_origin = cam_center + np.array([0, 0, cam_distance * 0.5])
-            ray_direction = np.array([
-                norm_x * cam_distance * 0.1,
-                norm_y * cam_distance * 0.1,
-                -cam_distance
-            ])
-            ray_direction = ray_direction / np.linalg.norm(ray_direction)
-
-            # Ray-mesh intersection using trimesh
-            locations, index_ray, index_tri = self.current_mesh.ray.intersects_location(
-                [ray_origin],
-                [ray_direction],
-                multiple_hits=False
-            )
-
-            if len(locations) > 0:
-                return locations[0]
-            return None
-        except Exception as e:
-            return None
-
-    def on_mouse_move(self, event):
-        """Handle mouse move events for preview"""
-        # Disable mouse interaction in top view mode
-        if self.top_view_mode:
-            return
-
-        if not self.point_picking_mode or self.current_mesh is None:
-            return
-
-        pos = event.pos
-        if pos is None:
-            return
-
-        # Compute intersection
-        intersection_point = self.compute_ray_intersection(pos[0], pos[1])
-
-        # Update preview marker
-        if intersection_point is not None:
-            # Remove old preview marker
-            if self.preview_marker is not None:
-                self.preview_marker.parent = None
-
-            # Create new preview marker (yellow/gold color)
-            self.preview_marker = Markers(
-                pos=np.array([intersection_point]),
-                size=8,
-                color='yellow',
-                parent=self.view.scene
-            )
-            self.canvas.update()
-        else:
-            # No intersection - remove preview marker
-            if self.preview_marker is not None:
-                self.preview_marker.parent = None
-                self.preview_marker = None
-                self.canvas.update()
-
-    def on_mouse_press(self, event):
-        """Handle mouse press events for point picking"""
-        # Disable mouse interaction in top view mode
-        if self.top_view_mode:
-            return
-
-        if not self.point_picking_mode or self.current_mesh is None:
-            return
-
-        # Get mouse position
-        if event.button != 1:  # Left click only
-            return
-
-        # Get the pick position
-        pos = event.pos
-        if pos is None:
-            return
-
-        try:
-            # Use the same ray computation as preview
-            intersection_point = self.compute_ray_intersection(pos[0], pos[1])
-
-            if intersection_point is not None:
-                self.add_picked_point(intersection_point)
-            else:
-                print("No intersection with mesh at this point")
-
-        except Exception as e:
-            print(f"Error picking point: {e}")
-            import traceback
-            traceback.print_exc()
 
     def add_picked_point(self, point):
         """Add a point to the picked points list"""
         self.picked_points.append(point)
-
-        # Add to list widget
         point_str = f"Point {len(self.picked_points)}: ({point[0]:.2f}, {point[1]:.2f}, {point[2]:.2f})"
         self.points_list.addItem(QListWidgetItem(point_str))
-
         print(f"Added point: {point}")
-
-        # Update visualization
         self.update_markers()
-
-    def get_ray_direction(self, norm_x, norm_y):
-        """Get ray direction from normalized coordinates"""
-        # This is a simplified ray direction calculation
-        # In a real implementation, you might use camera projection matrices
-        fov = self.view.camera.fov[0]
-        aspect = self.canvas.size[0] / self.canvas.size[1]
-
-        # Simple calculation
-        ray_dir = np.array([norm_x, norm_y, -1])
-        ray_dir = ray_dir / np.linalg.norm(ray_dir)
-
-        return ray_dir
 
     def update_markers(self):
         """Update marker visualization"""
         if len(self.picked_points) == 0:
             if self.markers_actor is not None:
-                self.markers_actor.parent = None
+                self.plotter.remove_actor(self.markers_actor)
                 self.markers_actor = None
             return
 
         # Remove old markers
         if self.markers_actor is not None:
-            self.markers_actor.parent = None
+            self.plotter.remove_actor(self.markers_actor)
 
         # Create new markers
-        positions = np.array(self.picked_points)
-        self.markers_actor = Markers(
-            pos=positions,
-            size=10,
-            color='red',
-            parent=self.view.scene
-        )
+        points = np.array(self.picked_points)
+        self.markers_actor = self.plotter.add_points(points, color='red', point_size=10)
+        self.plotter.render()
 
     def clear_points(self):
         """Clear all picked points"""
@@ -741,29 +523,6 @@ class RoboWatchGUI(QMainWindow):
         self.points_list.clear()
         self.update_markers()
         print("Points cleared")
-
-    def on_key_press(self, event):
-        """Handle keyboard events for zoom and other controls"""
-        if event.key == '+' or event.key == '=':
-            # Zoom in
-            self.view.camera.distance *= 0.8
-            self.canvas.update()
-            print("Zoomed in")
-        elif event.key == '-' or event.key == '_':
-            # Zoom out
-            self.view.camera.distance *= 1.25
-            self.canvas.update()
-            print("Zoomed out")
-        elif event.key == 'f':
-            # Fit to view
-            if self.current_mesh is not None:
-                mesh_center = self.current_mesh.centroid
-                mesh_bounds = self.current_mesh.bounds
-                mesh_size = np.max(mesh_bounds[1] - mesh_bounds[0])
-                self.view.camera.center = mesh_center
-                self.view.camera.distance = mesh_size * 1.5
-                self.canvas.update()
-                print("Fit to view")
 
 
 def main():
