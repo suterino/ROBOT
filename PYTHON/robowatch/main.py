@@ -453,9 +453,11 @@ class RoboWatchGUI(QMainWindow):
         # Convert 0-100 slider value to 0.0-1.0 opacity
         self.mesh_opacity = value / 100.0
         self.mesh_actor.GetProperty().SetOpacity(self.mesh_opacity)
-        self.plotter.render()
 
-        # Process events to update display smoothly
+        # Force render window update
+        self.plotter.render_window.Render()
+
+        # Process both Qt and VTK events for smooth updates
         QApplication.instance().processEvents()
 
         # Update label
@@ -474,9 +476,11 @@ class RoboWatchGUI(QMainWindow):
 
         # Apply the zoom
         self.plotter.camera.zoom(zoom_factor)
-        self.plotter.render()
 
-        # Process events to update display smoothly
+        # Force render window update
+        self.plotter.render_window.Render()
+
+        # Process both Qt and VTK events for smooth updates
         QApplication.instance().processEvents()
 
         # Update state
