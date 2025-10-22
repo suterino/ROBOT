@@ -362,10 +362,51 @@ class RoboWatchGUI(QMainWindow):
             print("  ✓ Creating axes...")
             self.create_axes()
 
-            # Fit camera to mesh
-            self.status_label.setText("Fitting camera...")
-            print("  ✓ Fitting camera to mesh...")
-            self.plotter.reset_camera()
+            # Set camera to top view (Z toward viewer, X horizontal, Y vertical)
+            self.status_label.setText("Setting camera to top view...")
+            print("  ✓ Setting camera to top view...")
+
+            mesh_center = self.current_mesh.center
+            bounds = self.current_mesh.bounds
+            mesh_size = max(bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4])
+            camera_distance = mesh_size * 2.0
+
+            # Position camera on Z axis looking down at mesh
+            # This gives us: Z toward viewer (blue axis as a point), X horizontal (red), Y vertical (green)
+            self.plotter.camera.position = (
+                mesh_center[0],
+                mesh_center[1],
+                mesh_center[2] + camera_distance
+            )
+            self.plotter.camera.focal_point = mesh_center
+            self.plotter.camera.up = (0, 1, 0)  # Y points up
+
+            # Save the initial camera state as the "top view" state
+            self.saved_camera_state = {
+                'position': tuple(self.plotter.camera.position),
+                'focal_point': tuple(self.plotter.camera.focal_point),
+                'up': tuple(self.plotter.camera.up)
+            }
+            print(f"  ✓ Saved initial camera state for Top View")
+            print(f"    Position: {self.saved_camera_state['position']}")
+            print(f"    Focal Point: {self.saved_camera_state['focal_point']}")
+            print(f"    Up: {self.saved_camera_state['up']}")
+
+            # Automatically activate top view mode on load (view is already top view, freeze it)
+            self.top_view_mode = True
+            self.top_btn.setStyleSheet(
+                "background-color: #4CAF50; color: white; font-weight: bold; padding: 6px; border-radius: 4px; border: 2px solid white;"
+            )
+
+            # Freeze the interaction immediately since we're in top view
+            if hasattr(self.plotter, 'iren') and self.plotter.iren:
+                try:
+                    from vtkmodules.vtkInteractionStyle import vtkInteractorStyleNone
+                    frozen_style = vtkInteractorStyleNone()
+                    self.plotter.iren.SetInteractorStyle(frozen_style)
+                    print("  ✓ Top view mode ACTIVATED on load - interaction FROZEN")
+                except Exception as e:
+                    print(f"  ! Warning: Could not freeze interaction: {e}")
 
             # Render
             self.status_label.setText("Rendering...")
@@ -524,35 +565,35 @@ class RoboWatchGUI(QMainWindow):
             print("Top View mode OFF")
 
     def set_top_view(self):
-        """Set camera to top view - looking straight down Z axis"""
-        if not self.plotter or not self.current_mesh:
-            print("Error: No mesh loaded. Click 'load temp' first.")
+        """Set camera to top view - restore initial camera position and freeze interaction"""
+        if not self.plotter or not self.saved_camera_state:
+            print("Error: No mesh loaded or camera state not saved. Click 'load temp' first.")
             return
 
         try:
-            # Get mesh center
-            mesh_center = self.current_mesh.center
+            # Restore the saved camera state from when mesh was loaded
+            self.plotter.camera.position = self.saved_camera_state['position']
+            self.plotter.camera.focal_point = self.saved_camera_state['focal_point']
+            self.plotter.camera.up = self.saved_camera_state['up']
 
-            # Position camera on Z axis looking down at mesh center
-            bounds = self.current_mesh.bounds
-            mesh_size = max(bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4])
-            camera_distance = mesh_size * 2.0
+            # Freeze mouse interaction by setting a None style
+            if hasattr(self.plotter, 'iren') and self.plotter.iren:
+                try:
+                    from vtkmodules.vtkInteractionStyle import vtkInteractorStyleNone
+                    frozen_style = vtkInteractorStyleNone()
+                    self.plotter.iren.SetInteractorStyle(frozen_style)
+                    print("  ✓ Mouse interaction FROZEN")
+                except Exception as freeze_error:
+                    print(f"  ! Warning: Could not freeze interaction: {freeze_error}")
 
-            # Set camera position (on Z axis, above the object)
-            self.plotter.camera.position = (
-                mesh_center[0],
-                mesh_center[1],
-                mesh_center[2] + camera_distance
-            )
+            # Force render update
+            self.plotter.render_window.Render()
+            QApplication.instance().processEvents()
 
-            # Set focal point to mesh center
-            self.plotter.camera.focal_point = mesh_center
-
-            # Set view up direction (Y pointing up)
-            self.plotter.camera.up = (0, 1, 0)
-
-            self.plotter.render()
-            print("Top view set - camera on Z axis looking at origin, Y up, X right")
+            print("Top view restored - camera position:")
+            print(f"  Position: {self.plotter.camera.position}")
+            print(f"  Focal Point: {self.plotter.camera.focal_point}")
+            print(f"  Up: {self.plotter.camera.up}")
 
         except Exception as e:
             print(f"Error setting top view: {e}")
@@ -640,15 +681,26 @@ class RoboWatchGUI(QMainWindow):
             traceback.print_exc()
 
     def restore_normal_view(self):
-        """Restore normal interactive view"""
+        """Restore normal interactive view - keep camera position, allow interaction"""
         if not self.plotter:
             return
 
         try:
-            # Reset camera
-            self.plotter.reset_camera()
-            self.plotter.render()
-            print("Normal view restored")
+            # Re-enable mouse interaction by setting trackball style (default PyVista style)
+            if hasattr(self.plotter, 'iren') and self.plotter.iren:
+                try:
+                    from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
+                    trackball_style = vtkInteractorStyleTrackballCamera()
+                    self.plotter.iren.SetInteractorStyle(trackball_style)
+                    print("  ✓ Mouse interaction UNFROZEN")
+                except Exception as unfreeze_error:
+                    print(f"  ! Warning: Could not unfreeze interaction: {unfreeze_error}")
+
+            # Render and allow interaction again
+            self.plotter.render_window.Render()
+            QApplication.instance().processEvents()
+            print("Normal view restored - interaction enabled, camera position kept")
+            print(f"  Position: {self.plotter.camera.position}")
 
         except Exception as e:
             print(f"Error restoring normal view: {e}")
