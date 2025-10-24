@@ -1,5 +1,6 @@
 import sys
 import time
+import json
 from pathlib import Path
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QVBoxLayout,
                              QHBoxLayout, QWidget, QPushButton, QLabel, QListWidget,
@@ -311,6 +312,12 @@ class RoboWatchGUI(QMainWindow):
         load_action.triggered.connect(self.load_stl_file)
         file_menu.addAction(load_action)
 
+        # Save action
+        save_action = QAction("Save STL", self)
+        save_action.setShortcut("Ctrl+S")
+        save_action.triggered.connect(self.save_stl_file)
+        file_menu.addAction(save_action)
+
         # Separator
         file_menu.addSeparator()
 
@@ -397,6 +404,85 @@ class RoboWatchGUI(QMainWindow):
         except Exception as e:
             self.status_label.setText(f"Error: {str(e)[:50]}")
             print(f"Error loading file: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def save_stl_file(self):
+        """Save the current STL mesh and path data"""
+        if self.current_mesh is None:
+            print("No mesh loaded to save")
+            return
+
+        try:
+            file_dialog = QFileDialog()
+            stl_dir = Path(__file__).parent / "STL"
+            stl_dir.mkdir(exist_ok=True)
+
+            file_path, _ = file_dialog.getSaveFileName(
+                self,
+                "Save STL File",
+                str(stl_dir),
+                "STL Files (*.stl);;All Files (*)"
+            )
+
+            if not file_path:
+                return
+
+            file_path = Path(file_path)
+
+            # Ensure .stl extension
+            if file_path.suffix.lower() != '.stl':
+                file_path = file_path.with_suffix('.stl')
+
+            # Save the mesh as STL
+            self.current_mesh.save(str(file_path))
+            print(f"Mesh saved to: {file_path}")
+
+            # Save points and paths data as JSON
+            json_path = file_path.with_suffix('.json')
+            paths_data = {
+                'paths': [],
+                'all_points': []
+            }
+
+            # Group points by path
+            for path_id in range(1, self.current_path_id + 1):
+                path_points = []
+                for i, point in enumerate(self.picked_points):
+                    if self.point_path_id[i] == path_id:
+                        path_points.append({
+                            'x': float(point[0]),
+                            'y': float(point[1]),
+                            'z': float(point[2])
+                        })
+
+                if path_points:
+                    paths_data['paths'].append({
+                        'path_id': path_id,
+                        'points': path_points
+                    })
+
+            # Also store all points with their path IDs
+            for i, point in enumerate(self.picked_points):
+                paths_data['all_points'].append({
+                    'index': i,
+                    'path_id': int(self.point_path_id[i]),
+                    'x': float(point[0]),
+                    'y': float(point[1]),
+                    'z': float(point[2])
+                })
+
+            # Write JSON file
+            with open(json_path, 'w') as f:
+                json.dump(paths_data, f, indent=2)
+
+            print(f"Path data saved to: {json_path}")
+            self.status_label.setText(f"Saved: {file_path.name} and {json_path.name}")
+            print("✓ Save complete!")
+
+        except Exception as e:
+            self.status_label.setText(f"Error saving: {str(e)[:50]}")
+            print(f"Error saving file: {e}")
             import traceback
             traceback.print_exc()
 
