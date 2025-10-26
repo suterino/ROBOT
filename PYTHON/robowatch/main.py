@@ -23,8 +23,8 @@ class RoboWatchGUI(QMainWindow):
         # Position window on the largest monitor (usually external monitor on laptop)
         self._position_menu_on_largest_monitor()
 
-        # Set window size for compact control panel
-        self.resize(350, 700)
+        # Set window size for compact control panel (reduced height by 30%)
+        self.resize(420, 490)
 
         # Create minimal central widget (mostly hidden)
         central_widget = QWidget()
@@ -66,6 +66,11 @@ class RoboWatchGUI(QMainWindow):
         self.zoom_level = 1.0  # Default zoom level
         self.last_pick_time = time.time() - 1  # For debouncing point picks (start in past)
 
+        # Lighting properties
+        self.ambient_light = 0.3  # Default ambient light
+        self.diffuse_light = 0.7  # Default diffuse light
+        self.specular_light = 0.3  # Default specular light
+
         # Store camera positions for view control
         self.saved_camera_state = None  # Top view camera state
         self.saved_side_camera_state = None  # Side view camera state
@@ -80,33 +85,18 @@ class RoboWatchGUI(QMainWindow):
         # Create dock widget content
         dock_widget = QWidget()
         dock_layout = QVBoxLayout()
+        dock_layout.setSpacing(4)
+        dock_layout.setContentsMargins(6, 4, 6, 4)
 
         # Title
         title = QLabel("RoboWatch Controls")
-        title.setStyleSheet("font-weight: bold; font-size: 12px;")
+        title.setStyleSheet("font-weight: bold; font-size: 11px;")
         dock_layout.addWidget(title)
-
-        # Controls info box
-        controls_label = QLabel("3D View Controls:")
-        controls_label.setStyleSheet("margin-top: 8px; font-weight: bold; font-size: 10px;")
-        dock_layout.addWidget(controls_label)
-
-        controls_info = QLabel(
-            "🖱 Scroll: Zoom\n"
-            "🖱 Left-drag: Rotate\n"
-            "🖱 Middle-drag: Pan\n"
-            "⌨ +/-: Zoom in/out"
-        )
-        controls_info.setStyleSheet(
-            "font-size: 9px; color: #555; padding: 6px; "
-            "background: #f9f9f9; border-radius: 3px; border: 1px solid #e0e0e0;"
-        )
-        dock_layout.addWidget(controls_info)
 
         # Create path button
         self.add_point_btn = QPushButton("create path")
         self.add_point_btn.setStyleSheet(
-            "background-color: #888888; color: #cccccc; font-weight: bold; padding: 8px;"
+            "background-color: #888888; color: #cccccc; font-weight: bold; padding: 6px; font-size: 10px;"
         )
         self.add_point_btn.clicked.connect(self.toggle_point_picking)
         self.add_point_btn.setEnabled(False)
@@ -114,11 +104,12 @@ class RoboWatchGUI(QMainWindow):
 
         # Points list label
         points_label = QLabel("Picked Points:")
-        points_label.setStyleSheet("margin-top: 15px; font-weight: bold;")
+        points_label.setStyleSheet("margin-top: 6px; font-weight: bold; font-size: 10px;")
         dock_layout.addWidget(points_label)
 
-        # Points list
+        # Points list (limited height)
         self.points_list = QListWidget()
+        self.points_list.setMaximumHeight(80)
         dock_layout.addWidget(self.points_list)
 
         # Clear point button with "all" radio button
@@ -138,33 +129,39 @@ class RoboWatchGUI(QMainWindow):
         clear_points_layout.addStretch()  # Add stretch to keep button and radio on left
         dock_layout.addLayout(clear_points_layout)
 
-        # Axes label
+        # Axes label and checkboxes (combined)
         axes_label = QLabel("Axes:")
-        axes_label.setStyleSheet("margin-top: 15px; font-weight: bold;")
+        axes_label.setStyleSheet("margin-top: 6px; font-weight: bold; font-size: 10px;")
         dock_layout.addWidget(axes_label)
 
-        # Axes checkboxes
+        # Axes checkboxes in one row
+        axes_layout = QHBoxLayout()
+        axes_layout.setSpacing(6)
+
         self.x_axis_checkbox = QCheckBox("X")
         self.x_axis_checkbox.setChecked(True)
-        self.x_axis_checkbox.setStyleSheet("color: red; font-weight: bold;")
+        self.x_axis_checkbox.setStyleSheet("color: red; font-weight: bold; font-size: 10px;")
         self.x_axis_checkbox.stateChanged.connect(self.toggle_x_axis)
-        dock_layout.addWidget(self.x_axis_checkbox)
+        axes_layout.addWidget(self.x_axis_checkbox)
 
         self.y_axis_checkbox = QCheckBox("Y")
         self.y_axis_checkbox.setChecked(True)
-        self.y_axis_checkbox.setStyleSheet("color: green; font-weight: bold;")
+        self.y_axis_checkbox.setStyleSheet("color: green; font-weight: bold; font-size: 10px;")
         self.y_axis_checkbox.stateChanged.connect(self.toggle_y_axis)
-        dock_layout.addWidget(self.y_axis_checkbox)
+        axes_layout.addWidget(self.y_axis_checkbox)
 
         self.z_axis_checkbox = QCheckBox("Z")
         self.z_axis_checkbox.setChecked(True)
-        self.z_axis_checkbox.setStyleSheet("color: blue; font-weight: bold;")
+        self.z_axis_checkbox.setStyleSheet("color: blue; font-weight: bold; font-size: 10px;")
         self.z_axis_checkbox.stateChanged.connect(self.toggle_z_axis)
-        dock_layout.addWidget(self.z_axis_checkbox)
+        axes_layout.addWidget(self.z_axis_checkbox)
+
+        axes_layout.addStretch()
+        dock_layout.addLayout(axes_layout)
 
         # View Control label
         view_label = QLabel("View Control:")
-        view_label.setStyleSheet("margin-top: 15px; font-weight: bold;")
+        view_label.setStyleSheet("margin-top: 6px; font-weight: bold; font-size: 10px;")
         dock_layout.addWidget(view_label)
 
         # Vertical layout for view controls (2 rows)
@@ -176,7 +173,7 @@ class RoboWatchGUI(QMainWindow):
         # Top view button
         self.top_btn = QPushButton("Top")
         self.top_btn.setStyleSheet(
-            "background-color: #808080; color: white; font-weight: bold; padding: 6px; border-radius: 4px;"
+            "background-color: #808080; color: white; font-weight: bold; padding: 4px; border-radius: 3px; font-size: 9px;"
         )
         self.top_btn.clicked.connect(self.toggle_top_view)
         view_buttons_layout.addWidget(self.top_btn)
@@ -184,7 +181,7 @@ class RoboWatchGUI(QMainWindow):
         # Side view button
         self.side_btn = QPushButton("Side")
         self.side_btn.setStyleSheet(
-            "background-color: #808080; color: white; font-weight: bold; padding: 6px; border-radius: 4px;"
+            "background-color: #808080; color: white; font-weight: bold; padding: 4px; border-radius: 3px; font-size: 9px;"
         )
         self.side_btn.clicked.connect(self.toggle_side_view)
         view_buttons_layout.addWidget(self.side_btn)
@@ -197,7 +194,7 @@ class RoboWatchGUI(QMainWindow):
         # Counter-clockwise rotation button
         self.ccw_btn = QPushButton("CW ↷")
         self.ccw_btn.setStyleSheet(
-            "background-color: #888888; color: #cccccc; font-weight: bold; padding: 6px;"
+            "background-color: #888888; color: #cccccc; font-weight: bold; padding: 4px; font-size: 9px;"
         )
         self.ccw_btn.clicked.connect(self.rotate_view_ccw)
         self.ccw_btn.setEnabled(False)
@@ -206,7 +203,7 @@ class RoboWatchGUI(QMainWindow):
         # Clockwise rotation button
         self.cw_btn = QPushButton("↶ CCW")
         self.cw_btn.setStyleSheet(
-            "background-color: #888888; color: #cccccc; font-weight: bold; padding: 6px;"
+            "background-color: #888888; color: #cccccc; font-weight: bold; padding: 4px; font-size: 9px;"
         )
         self.cw_btn.clicked.connect(self.rotate_view_cw)
         self.cw_btn.setEnabled(False)
@@ -217,12 +214,12 @@ class RoboWatchGUI(QMainWindow):
 
         # Camera Control label
         camera_label = QLabel("Camera Control:")
-        camera_label.setStyleSheet("margin-top: 15px; font-weight: bold;")
+        camera_label.setStyleSheet("margin-top: 6px; font-weight: bold; font-size: 10px;")
         dock_layout.addWidget(camera_label)
 
         # Zoom label
         zoom_label = QLabel("Zoom: 1.0x")
-        zoom_label.setStyleSheet("font-size: 10px; color: #666;")
+        zoom_label.setStyleSheet("font-size: 9px; color: #666;")
         self.zoom_label = zoom_label
         dock_layout.addWidget(zoom_label)
 
@@ -243,12 +240,12 @@ class RoboWatchGUI(QMainWindow):
 
         # Mesh Display label
         mesh_label = QLabel("Mesh Display:")
-        mesh_label.setStyleSheet("margin-top: 15px; font-weight: bold;")
+        mesh_label.setStyleSheet("margin-top: 6px; font-weight: bold; font-size: 10px;")
         dock_layout.addWidget(mesh_label)
 
         # Opacity label
         opacity_label = QLabel("Opacity: 30%")
-        opacity_label.setStyleSheet("font-size: 10px; color: #666;")
+        opacity_label.setStyleSheet("font-size: 9px; color: #666;")
         self.opacity_label = opacity_label
         dock_layout.addWidget(opacity_label)
 
@@ -267,37 +264,100 @@ class RoboWatchGUI(QMainWindow):
         opacity_layout.addWidget(opacity_slider)
         dock_layout.addLayout(opacity_layout)
 
+        # Lighting controls section
+        lighting_label = QLabel("Lighting:")
+        lighting_label.setStyleSheet("margin-top: 6px; font-weight: bold; font-size: 10px;")
+        dock_layout.addWidget(lighting_label)
+
+        # Ambient light slider
+        ambient_label = QLabel("Ambient: 30%")
+        ambient_label.setStyleSheet("font-size: 9px; color: #666;")
+        self.ambient_label = ambient_label
+        dock_layout.addWidget(ambient_label)
+
+        ambient_layout = QHBoxLayout()
+        ambient_slider = QSlider(Qt.Orientation.Horizontal)
+        ambient_slider.setMinimum(0)
+        ambient_slider.setMaximum(100)
+        ambient_slider.setValue(30)
+        ambient_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        ambient_slider.setTickInterval(10)
+        ambient_slider.sliderMoved.connect(self.on_ambient_light_change)
+        ambient_slider.valueChanged.connect(self.on_ambient_light_change)
+        self.ambient_slider = ambient_slider
+        ambient_layout.addWidget(ambient_slider)
+        dock_layout.addLayout(ambient_layout)
+
+        # Diffuse light slider
+        diffuse_label = QLabel("Diffuse: 70%")
+        diffuse_label.setStyleSheet("font-size: 9px; color: #666;")
+        self.diffuse_label = diffuse_label
+        dock_layout.addWidget(diffuse_label)
+
+        diffuse_layout = QHBoxLayout()
+        diffuse_slider = QSlider(Qt.Orientation.Horizontal)
+        diffuse_slider.setMinimum(0)
+        diffuse_slider.setMaximum(100)
+        diffuse_slider.setValue(70)
+        diffuse_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        diffuse_slider.setTickInterval(10)
+        diffuse_slider.sliderMoved.connect(self.on_diffuse_light_change)
+        diffuse_slider.valueChanged.connect(self.on_diffuse_light_change)
+        self.diffuse_slider = diffuse_slider
+        diffuse_layout.addWidget(diffuse_slider)
+        dock_layout.addLayout(diffuse_layout)
+
+        # Specular light slider
+        specular_label = QLabel("Specular: 30%")
+        specular_label.setStyleSheet("font-size: 9px; color: #666;")
+        self.specular_label = specular_label
+        dock_layout.addWidget(specular_label)
+
+        specular_layout = QHBoxLayout()
+        specular_slider = QSlider(Qt.Orientation.Horizontal)
+        specular_slider.setMinimum(0)
+        specular_slider.setMaximum(100)
+        specular_slider.setValue(30)
+        specular_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        specular_slider.setTickInterval(10)
+        specular_slider.sliderMoved.connect(self.on_specular_light_change)
+        specular_slider.valueChanged.connect(self.on_specular_light_change)
+        self.specular_slider = specular_slider
+        specular_layout.addWidget(specular_slider)
+        dock_layout.addLayout(specular_layout)
+
+        # Bottom buttons layout
+        bottom_layout = QHBoxLayout()
+        bottom_layout.setSpacing(4)
+
         # Edges button
         edges_btn = QPushButton("Edges")
-        edges_btn.setStyleSheet("background-color: #FF5722; color: white; padding: 6px; font-size: 9px;")
+        edges_btn.setStyleSheet("background-color: #FF5722; color: white; padding: 4px; font-size: 9px;")
         edges_btn.clicked.connect(self.toggle_mesh_edges)
-        dock_layout.addWidget(edges_btn)
+        bottom_layout.addWidget(edges_btn)
+
+        # Temporary debug button
+        temp_btn = QPushButton("load temp")
+        temp_btn.setStyleSheet("background-color: #808080; color: white; padding: 4px; font-size: 9px;")
+        temp_btn.clicked.connect(self.load_temp_file)
+        bottom_layout.addWidget(temp_btn)
+
+        dock_layout.addLayout(bottom_layout)
 
         # Add stretch to bottom
         dock_layout.addStretch()
 
-        # Temporary debug button
-        temp_btn = QPushButton("load temp")
-        temp_btn.setStyleSheet("background-color: #808080; color: white; padding: 6px;")
-        temp_btn.clicked.connect(self.load_temp_file)
-        dock_layout.addWidget(temp_btn)
-
         # Status label
         self.status_label = QLabel("Ready")
-        self.status_label.setStyleSheet("font-size: 10px; color: #666; padding: 5px; background: #f5f5f5; border-radius: 3px;")
+        self.status_label.setStyleSheet("font-size: 8px; color: #666; padding: 3px; background: #f5f5f5; border-radius: 3px;")
         dock_layout.addWidget(self.status_label)
 
-        # Info label
-        info_label = QLabel("Click 'Start' then click on\nthe mesh to add points")
-        info_label.setStyleSheet("font-size: 10px; color: gray;")
-        dock_layout.addWidget(info_label)
-
         dock_widget.setLayout(dock_layout)
-        dock_widget.setMaximumWidth(280)  # Limit dock width
+        dock_widget.setMaximumWidth(420)  # Limit dock width
         dock.setWidget(dock_widget)
 
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
-        self.resizeDocks([dock], [280], Qt.Orientation.Horizontal)
+        self.resizeDocks([dock], [420], Qt.Orientation.Horizontal)
 
     def create_menu_bar(self):
         """Create the menu bar with File menu"""
@@ -384,6 +444,15 @@ class RoboWatchGUI(QMainWindow):
             self.status_label.setText("Reading STL file...")
             print(f"Loading: {file_path}")
 
+            # Close old plotter if it exists
+            if self.plotter is not None:
+                try:
+                    self.plotter.close()
+                    print("  ✓ Old plotter window closed")
+                except Exception as e:
+                    print(f"  ! Warning: Could not close old plotter: {e}")
+                self.plotter = None
+
             # Load mesh using PyVista
             self.current_mesh = pv.read(file_path)
             self.original_mesh = self.current_mesh.copy()
@@ -397,7 +466,17 @@ class RoboWatchGUI(QMainWindow):
 
             # Update window title
             self.setWindowTitle(f"RoboWatch - {Path(file_path).name}")
-            self.status_label.setText("Mesh ready! Check PyVista window")
+
+            # Try to load associated JSON file with points and paths
+            json_path = Path(file_path).with_suffix('.json')
+            if json_path.exists():
+                print(f"Found JSON file: {json_path}")
+                self.load_paths_from_json(str(json_path))
+                self.status_label.setText("Mesh and paths loaded!")
+                print("✓ Points and paths loaded into view")
+            else:
+                print(f"No JSON file found at: {json_path}")
+                self.status_label.setText("Mesh ready! Check PyVista window")
 
             print("Mesh displayed successfully")
 
@@ -483,6 +562,66 @@ class RoboWatchGUI(QMainWindow):
         except Exception as e:
             self.status_label.setText(f"Error saving: {str(e)[:50]}")
             print(f"Error saving file: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def load_paths_from_json(self, json_file_path):
+        """Load points and paths from a JSON file"""
+        try:
+            print(f"Loading paths from: {json_file_path}")
+
+            # Make sure plotter exists and is ready
+            if not self.plotter:
+                print("  ! Error: Plotter not initialized yet")
+                return
+
+            with open(json_file_path, 'r') as f:
+                paths_data = json.load(f)
+
+            # Clear existing points and paths
+            self.picked_points = []
+            self.point_path_id = []
+            self.current_path_id = 0
+
+            # Load all points
+            if 'all_points' in paths_data:
+                for point_data in paths_data['all_points']:
+                    point = [point_data['x'], point_data['y'], point_data['z']]
+                    self.picked_points.append(point)
+                    self.point_path_id.append(point_data['path_id'])
+
+                    # Update current_path_id to track highest path ID
+                    if point_data['path_id'] > self.current_path_id:
+                        self.current_path_id = point_data['path_id']
+
+                    # Add to points list in UI
+                    points_in_path = sum(1 for pid in self.point_path_id if pid == point_data['path_id'])
+                    if points_in_path == 1:
+                        point_str = f"Start point... (Path {point_data['path_id']}): ({point[0]:.2f}, {point[1]:.2f}, {point[2]:.2f})"
+                    else:
+                        point_str = f"Point {points_in_path} (Path {point_data['path_id']}): ({point[0]:.2f}, {point[1]:.2f}, {point[2]:.2f})"
+
+                    self.points_list.addItem(QListWidgetItem(point_str))
+
+                # Update visualization
+                self.update_markers()
+                self.update_path()
+
+                # Force a complete render to display the loaded points and paths
+                if self.plotter:
+                    self.plotter.render_window.Render()
+                    QApplication.instance().processEvents()
+                    print("  ✓ Render complete - points and paths displayed")
+
+                # Scroll to bottom of points list
+                self.points_list.scrollToBottom()
+
+                print(f"✓ Loaded {len(self.picked_points)} points from {len(set(self.point_path_id))} paths")
+            else:
+                print("No points found in JSON file")
+
+        except Exception as e:
+            print(f"Error loading paths from JSON: {e}")
             import traceback
             traceback.print_exc()
 
@@ -583,6 +722,30 @@ class RoboWatchGUI(QMainWindow):
                 except Exception as e:
                     print(f"  ! Warning: Could not set interaction style: {e}")
 
+            # Add lighting for shadows and depth
+            self.status_label.setText("Setting up lighting...")
+            print("  ✓ Adding point light source for shadows...")
+            try:
+                from vtkmodules.vtkRenderingCore import vtkLight
+
+                # Create a new light from upper-left-front position
+                light = vtkLight()
+                light.SetPosition(
+                    mesh_center[0] - camera_distance * 0.5,  # Left side
+                    mesh_center[1] + camera_distance * 0.5,  # Above
+                    mesh_center[2] + camera_distance * 0.8   # Toward viewer
+                )
+                light.SetFocalPoint(mesh_center[0], mesh_center[1], mesh_center[2])
+                light.SetIntensity(1.0)
+                light.PositionalOn()  # Make it a point light (not directional)
+
+                # Add the light to the renderer
+                self.plotter.renderer.AddLight(light)
+
+                print("  ✓ Point light added - shadows enabled")
+            except Exception as e:
+                print(f"  ! Warning: Could not add point light: {e}")
+
             # Render
             self.status_label.setText("Rendering...")
             print("  ✓ Rendering mesh...")
@@ -591,6 +754,11 @@ class RoboWatchGUI(QMainWindow):
             # Initialize interactor to make window visible
             print("  ✓ Initializing interactor...")
             self.plotter.iren.initialize()
+
+            # Force window to be shown and on top
+            self.plotter.render_window.Render()
+            QApplication.instance().processEvents()
+
             print("  ✓ Interactor initialized - window should be visible now")
 
             # Note on macOS: VTK windows cannot be repositioned after creation due to platform limitations
@@ -714,6 +882,54 @@ class RoboWatchGUI(QMainWindow):
 
         # Update label
         self.zoom_label.setText(f"Zoom: {target_zoom:.1f}x")
+
+    def on_ambient_light_change(self, value):
+        """Handle ambient light slider change (0-100)"""
+        if not self.plotter or not self.mesh_actor:
+            return
+
+        # Convert 0-100 slider value to 0.0-1.0
+        self.ambient_light = value / 100.0
+        self.mesh_actor.GetProperty().SetAmbient(self.ambient_light)
+
+        # Force render window update
+        self.plotter.render_window.Render()
+        QApplication.instance().processEvents()
+
+        # Update label
+        self.ambient_label.setText(f"Ambient: {value}%")
+
+    def on_diffuse_light_change(self, value):
+        """Handle diffuse light slider change (0-100)"""
+        if not self.plotter or not self.mesh_actor:
+            return
+
+        # Convert 0-100 slider value to 0.0-1.0
+        self.diffuse_light = value / 100.0
+        self.mesh_actor.GetProperty().SetDiffuse(self.diffuse_light)
+
+        # Force render window update
+        self.plotter.render_window.Render()
+        QApplication.instance().processEvents()
+
+        # Update label
+        self.diffuse_label.setText(f"Diffuse: {value}%")
+
+    def on_specular_light_change(self, value):
+        """Handle specular light slider change (0-100)"""
+        if not self.plotter or not self.mesh_actor:
+            return
+
+        # Convert 0-100 slider value to 0.0-1.0
+        self.specular_light = value / 100.0
+        self.mesh_actor.GetProperty().SetSpecular(self.specular_light)
+
+        # Force render window update
+        self.plotter.render_window.Render()
+        QApplication.instance().processEvents()
+
+        # Update label
+        self.specular_label.setText(f"Specular: {value}%")
 
     def toggle_mesh_edges(self):
         """Toggle mesh edges visibility"""
