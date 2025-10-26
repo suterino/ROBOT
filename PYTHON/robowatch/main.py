@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QVBoxLayout,
                              QHBoxLayout, QWidget, QPushButton, QLabel, QListWidget,
-                             QListWidgetItem, QDockWidget, QCheckBox, QSlider, QSpinBox, QRadioButton)
+                             QListWidgetItem, QDockWidget, QCheckBox, QSlider, QSpinBox, QRadioButton, QComboBox)
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
 
@@ -68,6 +68,13 @@ class RoboWatchGUI(QMainWindow):
         self.zoom_level = 1.0  # Default zoom level
         self.last_pick_time = time.time() - 1  # For debouncing point picks (start in past)
         self.torch_distance = 1.0  # Default torch distance in mm
+
+        # Simulation mode variables
+        self.torch_actor = None  # The torch cylinder actor
+        self.torch_orientation_line_actor = None  # The white orientation line actor
+        self.simulation_mode = False  # Whether we're in simulation
+        self.selected_path_id = None  # Which path is selected
+        self.current_point_index = 0  # Current point in the path
 
         # Lighting properties
         self.ambient_light = 0.3  # Default ambient light
@@ -373,6 +380,52 @@ class RoboWatchGUI(QMainWindow):
 
         dock_layout.addLayout(bottom_layout)
 
+        # Simulation section (at bottom)
+        simulation_label = QLabel("Simulation:")
+        simulation_label.setStyleSheet("margin-top: 6px; font-weight: bold; font-size: 10px;")
+        dock_layout.addWidget(simulation_label)
+
+        # Simulation button
+        self.simulation_btn = QPushButton("Simulation")
+        self.simulation_btn.setStyleSheet(
+            "background-color: #888888; color: #cccccc; font-weight: bold; padding: 6px; font-size: 10px;"
+        )
+        self.simulation_btn.clicked.connect(self.toggle_simulation_mode)
+        self.simulation_btn.setEnabled(False)
+        dock_layout.addWidget(self.simulation_btn)
+
+        # Path selection dropdown for simulation
+        path_list_label = QLabel("Select Path:")
+        path_list_label.setStyleSheet("font-size: 9px; font-weight: bold;")
+        dock_layout.addWidget(path_list_label)
+
+        self.simulation_path_dropdown = QComboBox()
+        self.simulation_path_dropdown.currentIndexChanged.connect(self.on_simulation_path_selected)
+        self.simulation_path_dropdown.setEnabled(False)
+        self.simulation_path_dropdown.setStyleSheet("font-size: 9px;")
+        dock_layout.addWidget(self.simulation_path_dropdown)
+
+        # FWD and BACK buttons
+        nav_layout = QHBoxLayout()
+
+        self.back_btn = QPushButton("BACK")
+        self.back_btn.setStyleSheet(
+            "background-color: #888888; color: #cccccc; font-weight: bold; padding: 4px; font-size: 9px;"
+        )
+        self.back_btn.clicked.connect(self.on_simulation_back)
+        self.back_btn.setEnabled(False)
+        nav_layout.addWidget(self.back_btn)
+
+        self.fwd_btn = QPushButton("FWD")
+        self.fwd_btn.setStyleSheet(
+            "background-color: #888888; color: #cccccc; font-weight: bold; padding: 4px; font-size: 9px;"
+        )
+        self.fwd_btn.clicked.connect(self.on_simulation_fwd)
+        self.fwd_btn.setEnabled(False)
+        nav_layout.addWidget(self.fwd_btn)
+
+        dock_layout.addLayout(nav_layout)
+
         # Add stretch to bottom
         dock_layout.addStretch()
 
@@ -665,6 +718,12 @@ class RoboWatchGUI(QMainWindow):
                 self.update_torch_segments()  # Update torch segments
                 self.update_path()
 
+                # Enable simulation button now that we have points from JSON
+                self.simulation_btn.setEnabled(True)
+                self.simulation_btn.setStyleSheet(
+                    "background-color: #FF9800; color: white; font-weight: bold; padding: 6px; font-size: 10px;"
+                )
+
                 # Force a complete render to display the loaded points and paths
                 if self.plotter:
                     self.plotter.render_window.Render()
@@ -680,6 +739,247 @@ class RoboWatchGUI(QMainWindow):
 
         except Exception as e:
             print(f"Error loading paths from JSON: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def toggle_simulation_mode(self):
+        """Toggle simulation mode on/off"""
+        if not self.picked_points:
+            print("No points to simulate - create a path first")
+            return
+
+        self.simulation_mode = not self.simulation_mode
+
+        if self.simulation_mode:
+            # Entering simulation mode
+            self.simulation_btn.setStyleSheet(
+                "background-color: #FF9800; color: white; font-weight: bold; padding: 6px; border: 2px solid white;"
+            )
+            self.add_point_btn.setEnabled(False)
+            self.add_point_btn.setStyleSheet("background-color: #888888; color: #cccccc; font-weight: bold; padding: 6px; font-size: 10px;")
+
+            # Populate path dropdown
+            self.update_simulation_path_list()
+
+            # Enable path dropdown
+            self.simulation_path_dropdown.setEnabled(True)
+
+            # Enable BACK/FWD buttons
+            self.back_btn.setEnabled(True)
+            self.fwd_btn.setEnabled(True)
+            self.back_btn.setStyleSheet(
+                "background-color: #FF9800; color: white; font-weight: bold; padding: 4px; font-size: 9px;"
+            )
+            self.fwd_btn.setStyleSheet(
+                "background-color: #FF9800; color: white; font-weight: bold; padding: 4px; font-size: 9px;"
+            )
+
+            print("Simulation mode ON")
+        else:
+            # Exiting simulation mode
+            self.simulation_btn.setStyleSheet(
+                "background-color: #888888; color: #cccccc; font-weight: bold; padding: 6px; font-size: 10px;"
+            )
+            self.add_point_btn.setEnabled(True)
+            self.add_point_btn.setStyleSheet(
+                "background-color: #FF9800; color: white; font-weight: bold; padding: 8px;"
+            )
+
+            # Clear simulation
+            self.selected_path_id = None
+            self.current_point_index = 0
+            self.simulation_path_dropdown.clear()
+            self.simulation_path_dropdown.setEnabled(False)
+            self.back_btn.setEnabled(False)
+            self.fwd_btn.setEnabled(False)
+            self.back_btn.setStyleSheet(
+                "background-color: #888888; color: #cccccc; font-weight: bold; padding: 4px; font-size: 9px;"
+            )
+            self.fwd_btn.setStyleSheet(
+                "background-color: #888888; color: #cccccc; font-weight: bold; padding: 4px; font-size: 9px;"
+            )
+
+            # Remove torch and orientation line
+            if self.torch_actor is not None and self.plotter:
+                self.plotter.remove_actor(self.torch_actor)
+                self.torch_actor = None
+            if self.torch_orientation_line_actor is not None and self.plotter:
+                self.plotter.remove_actor(self.torch_orientation_line_actor)
+                self.torch_orientation_line_actor = None
+            if self.plotter:
+                self.plotter.render_window.Render()
+                QApplication.instance().processEvents()
+
+            print("Simulation mode OFF")
+
+    def update_simulation_path_list(self):
+        """Update the path dropdown in simulation"""
+        # Block signals to avoid triggering selection during update
+        self.simulation_path_dropdown.blockSignals(True)
+
+        self.simulation_path_dropdown.clear()
+
+        # Get unique path IDs
+        unique_paths = sorted(set(self.point_path_id))
+
+        for path_id in unique_paths:
+            # Count points in this path
+            point_count = sum(1 for pid in self.point_path_id if pid == path_id)
+            item_text = f"Path {path_id} ({point_count} points)"
+            self.simulation_path_dropdown.addItem(item_text)
+
+        # Set first path as current (without triggering signal yet)
+        self.simulation_path_dropdown.setCurrentIndex(0)
+
+        # Unblock signals
+        self.simulation_path_dropdown.blockSignals(False)
+
+        # Manually call the selection handler to display the torch
+        self.on_simulation_path_selected()
+
+    def on_simulation_path_selected(self):
+        """Handle path selection in simulation"""
+        text = self.simulation_path_dropdown.currentText()
+        if not text:
+            return
+
+        # Extract path ID from item text (e.g., "Path 1 (5 points)" -> 1)
+        path_id_str = text.split()[1]  # Get the number after "Path"
+        self.selected_path_id = int(path_id_str)
+        self.current_point_index = 0
+
+        # Position torch at first point of path
+        self.update_torch_position()
+
+        print(f"Selected Path {self.selected_path_id}")
+
+    def update_torch_position(self):
+        """Update torch position based on selected path and point index"""
+        if self.selected_path_id is None or not self.plotter:
+            return
+
+        # Find all points in the selected path
+        path_point_indices = [i for i, pid in enumerate(self.point_path_id) if pid == self.selected_path_id]
+
+        if not path_point_indices:
+            print(f"No points found in path {self.selected_path_id}")
+            return
+
+        # Clamp current_point_index to valid range
+        if self.current_point_index >= len(path_point_indices):
+            self.current_point_index = len(path_point_indices) - 1
+        if self.current_point_index < 0:
+            self.current_point_index = 0
+
+        # Get the current point index in the global list
+        global_index = path_point_indices[self.current_point_index]
+        point = np.array(self.picked_points[global_index])
+        normal = self.point_normals[global_index] if global_index < len(self.point_normals) else np.array([0, 0, 1])
+
+        # Calculate torch endpoint (at the tip of the vertical segment)
+        torch_endpoint = point + normal * self.torch_distance
+
+        # Create or update torch
+        self.create_or_update_torch(torch_endpoint, normal)
+
+        # Print info
+        point_num = self.current_point_index + 1
+        total_points = len(path_point_indices)
+        print(f"Path {self.selected_path_id}, Point {point_num}/{total_points}")
+        print(f"  Position: ({point[0]:.2f}, {point[1]:.2f}, {point[2]:.2f})")
+        print(f"  Normal: ({normal[0]:.2f}, {normal[1]:.2f}, {normal[2]:.2f})")
+
+    def on_simulation_fwd(self):
+        """Move to next point in path"""
+        if self.selected_path_id is None:
+            return
+
+        # Find total points in this path
+        path_point_count = sum(1 for pid in self.point_path_id if pid == self.selected_path_id)
+
+        # Move to next point
+        if self.current_point_index < path_point_count - 1:
+            self.current_point_index += 1
+            self.update_torch_position()
+        else:
+            print(f"Already at last point of path {self.selected_path_id}")
+
+    def on_simulation_back(self):
+        """Move to previous point in path"""
+        if self.selected_path_id is None:
+            return
+
+        # Move to previous point
+        if self.current_point_index > 0:
+            self.current_point_index -= 1
+            self.update_torch_position()
+        else:
+            print(f"Already at first point of path {self.selected_path_id}")
+
+    def create_or_update_torch(self, position, normal):
+        """Create or update the torch cylinder at given position and orientation"""
+        if not self.plotter:
+            return
+
+        # Remove old torch if exists
+        if self.torch_actor is not None:
+            self.plotter.remove_actor(self.torch_actor)
+            self.torch_actor = None
+
+        # Remove old orientation line if exists
+        if self.torch_orientation_line_actor is not None:
+            self.plotter.remove_actor(self.torch_orientation_line_actor)
+            self.torch_orientation_line_actor = None
+
+        # Torch parameters - small cylinder extending from the vertical line
+        torch_radius = 0.8  # mm - slightly bigger than the vertical lines
+        torch_height = 4.0  # mm - 1/5 of original 20mm
+        torch_color = 'green'
+
+        try:
+            # Create cylinder aligned with the normal direction
+            # Default cylinder is aligned with Z axis
+            torch_cyl = pv.Cylinder(radius=torch_radius, height=torch_height, direction=(0, 0, 1))
+
+            # Rotate cylinder to align with normal
+            # Calculate rotation axis and angle
+            default_normal = np.array([0, 0, 1])
+            normal_normalized = normal / np.linalg.norm(normal)
+
+            # Calculate rotation
+            rotation_axis = np.cross(default_normal, normal_normalized)
+            rotation_magnitude = np.linalg.norm(rotation_axis)
+
+            if rotation_magnitude > 1e-6:  # Only rotate if axis is significant
+                rotation_axis = rotation_axis / rotation_magnitude
+                rotation_angle = np.arccos(np.clip(np.dot(default_normal, normal_normalized), -1.0, 1.0))
+                rotation_angle_deg = np.degrees(rotation_angle)
+
+                # Rotate the cylinder
+                torch_cyl = torch_cyl.rotate_vector(rotation_axis, rotation_angle_deg, point=torch_cyl.center)
+
+            # Position the torch so it starts at the tip of the vertical line and extends along the normal
+            # The cylinder's center should be at: position + (torch_height / 2) * normal_normalized
+            torch_center = position + normal_normalized * (torch_height / 2)
+            torch_cyl = torch_cyl.translate(torch_center - torch_cyl.center)
+
+            # Add white orientation line on the side of the cylinder
+            line_start = torch_center
+            line_end = torch_center + np.array([torch_radius * 0.6, 0, 0])  # Line extends radially
+            orientation_line = pv.Line(line_start, line_end)
+
+            # Add torch to plotter and store references
+            self.torch_actor = self.plotter.add_mesh(torch_cyl, color=torch_color, opacity=0.8)
+            self.torch_orientation_line_actor = self.plotter.add_mesh(orientation_line, color='white', line_width=2)
+
+            # Render
+            self.plotter.render_window.Render()
+            QApplication.instance().processEvents()
+
+            print(f"  ✓ Torch positioned at ({position[0]:.2f}, {position[1]:.2f}, {position[2]:.2f})")
+
+        except Exception as e:
+            print(f"Error creating torch: {e}")
             import traceback
             traceback.print_exc()
 
@@ -990,8 +1290,8 @@ class RoboWatchGUI(QMainWindow):
         self.specular_label.setText(f"Specular: {value}%")
 
     def on_torch_distance_change(self, value):
-        """Handle torch distance slider change (0-30 = 0.0-3.0mm)"""
-        # Convert slider value (0-30) to mm (0.0-3.0)
+        """Handle torch distance slider change (0-100 = 0.0-10.0mm)"""
+        # Convert slider value (0-100) to mm (0.0-10.0)
         self.torch_distance = value / 10.0
 
         # Update label
@@ -999,6 +1299,10 @@ class RoboWatchGUI(QMainWindow):
 
         # Update torch segments in the viewer
         self.update_torch_segments()
+
+        # If in simulation mode with a path selected, update torch position
+        if self.simulation_mode and self.selected_path_id is not None:
+            self.update_torch_position()
 
         # Render only once after updating segments
         if self.plotter:
@@ -1491,6 +1795,7 @@ class RoboWatchGUI(QMainWindow):
         # Scroll to show the newly added point
         self.points_list.scrollToBottom()
         print(f"Added point: {point}")
+
         self.update_markers()
         self.update_torch_segments()  # Update torch segments
         self.update_path()  # Update path lines between consecutive points
@@ -1653,6 +1958,16 @@ class RoboWatchGUI(QMainWindow):
                 print(f"Removed last point: ({removed_point[0]:.2f}, {removed_point[1]:.2f}, {removed_point[2]:.2f})")
             else:
                 print("No points to clear")
+
+        # Disable simulation button if no points
+        if len(self.picked_points) == 0:
+            self.simulation_btn.setEnabled(False)
+            self.simulation_btn.setStyleSheet(
+                "background-color: #888888; color: #cccccc; font-weight: bold; padding: 6px; font-size: 10px;"
+            )
+            # Exit simulation mode if active
+            if self.simulation_mode:
+                self.toggle_simulation_mode()
 
         # Update visualization
         self.update_markers()
