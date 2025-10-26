@@ -55,8 +55,10 @@ class RoboWatchGUI(QMainWindow):
         self.axis_actors = {}  # Store axis actors
         self.markers_actor = None
         self.path_lines_actor = None  # Store path lines connecting points
+        self.torch_segments_actor = None  # Store torch distance segments
         self.picked_points = []
         self.point_path_id = []  # Track which path each point belongs to
+        self.point_normals = []  # Store surface normal at each point
         self.current_path_id = 0  # ID of current path being created
         self.point_picking_mode = False
         self.top_view_mode = False
@@ -65,6 +67,7 @@ class RoboWatchGUI(QMainWindow):
         self.mesh_opacity = 0.3
         self.zoom_level = 1.0  # Default zoom level
         self.last_pick_time = time.time() - 1  # For debouncing point picks (start in past)
+        self.torch_distance = 1.0  # Default torch distance in mm
 
         # Lighting properties
         self.ambient_light = 0.3  # Default ambient light
@@ -263,6 +266,32 @@ class RoboWatchGUI(QMainWindow):
         self.opacity_slider = opacity_slider
         opacity_layout.addWidget(opacity_slider)
         dock_layout.addLayout(opacity_layout)
+
+        # Torch Distance label
+        torch_label = QLabel("Torch Distance:")
+        torch_label.setStyleSheet("margin-top: 6px; font-weight: bold; font-size: 10px;")
+        dock_layout.addWidget(torch_label)
+
+        # Torch distance label
+        torch_distance_label = QLabel("Torch Distance: 1.0mm")
+        torch_distance_label.setStyleSheet("font-size: 9px; color: #666;")
+        self.torch_distance_label = torch_distance_label
+        dock_layout.addWidget(torch_distance_label)
+
+        # Torch distance slider (0-10mm, step 0.1)
+        torch_layout = QHBoxLayout()
+        torch_slider = QSlider(Qt.Orientation.Horizontal)
+        torch_slider.setMinimum(0)  # 0.0 mm
+        torch_slider.setMaximum(100)  # 10.0 mm (100 * 0.1)
+        torch_slider.setValue(10)  # 1.0 mm (10 * 0.1) - default
+        torch_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        torch_slider.setTickInterval(10)
+        # Use sliderMoved for smooth dragging feedback
+        torch_slider.sliderMoved.connect(self.on_torch_distance_change)
+        torch_slider.valueChanged.connect(self.on_torch_distance_change)
+        self.torch_slider = torch_slider
+        torch_layout.addWidget(torch_slider)
+        dock_layout.addLayout(torch_layout)
 
         # Lighting controls section
         lighting_label = QLabel("Lighting:")
@@ -521,7 +550,8 @@ class RoboWatchGUI(QMainWindow):
             json_path = file_path.with_suffix('.json')
             paths_data = {
                 'paths': [],
-                'all_points': []
+                'all_points': [],
+                'torch_distance': float(self.torch_distance)
             }
 
             # Group points by path
@@ -529,10 +559,14 @@ class RoboWatchGUI(QMainWindow):
                 path_points = []
                 for i, point in enumerate(self.picked_points):
                     if self.point_path_id[i] == path_id:
+                        normal = self.point_normals[i] if i < len(self.point_normals) else [0, 0, 1]
                         path_points.append({
                             'x': float(point[0]),
                             'y': float(point[1]),
-                            'z': float(point[2])
+                            'z': float(point[2]),
+                            'normal_x': float(normal[0]),
+                            'normal_y': float(normal[1]),
+                            'normal_z': float(normal[2])
                         })
 
                 if path_points:
@@ -541,14 +575,18 @@ class RoboWatchGUI(QMainWindow):
                         'points': path_points
                     })
 
-            # Also store all points with their path IDs
+            # Also store all points with their path IDs and normals
             for i, point in enumerate(self.picked_points):
+                normal = self.point_normals[i] if i < len(self.point_normals) else [0, 0, 1]
                 paths_data['all_points'].append({
                     'index': i,
                     'path_id': int(self.point_path_id[i]),
                     'x': float(point[0]),
                     'y': float(point[1]),
-                    'z': float(point[2])
+                    'z': float(point[2]),
+                    'normal_x': float(normal[0]),
+                    'normal_y': float(normal[1]),
+                    'normal_z': float(normal[2])
                 })
 
             # Write JSON file
@@ -581,7 +619,19 @@ class RoboWatchGUI(QMainWindow):
             # Clear existing points and paths
             self.picked_points = []
             self.point_path_id = []
+            self.point_normals = []
             self.current_path_id = 0
+
+            # Load torch distance if available
+            if 'torch_distance' in paths_data:
+                self.torch_distance = float(paths_data['torch_distance'])
+                # Update slider to reflect loaded torch distance
+                slider_value = int(self.torch_distance * 10)
+                self.torch_slider.blockSignals(True)
+                self.torch_slider.setValue(slider_value)
+                self.torch_slider.blockSignals(False)
+                self.torch_distance_label.setText(f"Torch Distance: {self.torch_distance:.1f}mm")
+                print(f"  ✓ Loaded torch distance: {self.torch_distance:.1f}mm")
 
             # Load all points
             if 'all_points' in paths_data:
@@ -589,6 +639,13 @@ class RoboWatchGUI(QMainWindow):
                     point = [point_data['x'], point_data['y'], point_data['z']]
                     self.picked_points.append(point)
                     self.point_path_id.append(point_data['path_id'])
+
+                    # Load normal if available
+                    if 'normal_x' in point_data:
+                        normal = np.array([point_data['normal_x'], point_data['normal_y'], point_data['normal_z']])
+                    else:
+                        normal = np.array([0, 0, 1])
+                    self.point_normals.append(normal)
 
                     # Update current_path_id to track highest path ID
                     if point_data['path_id'] > self.current_path_id:
@@ -605,13 +662,14 @@ class RoboWatchGUI(QMainWindow):
 
                 # Update visualization
                 self.update_markers()
+                self.update_torch_segments()  # Update torch segments
                 self.update_path()
 
                 # Force a complete render to display the loaded points and paths
                 if self.plotter:
                     self.plotter.render_window.Render()
                     QApplication.instance().processEvents()
-                    print("  ✓ Render complete - points and paths displayed")
+                    print("  ✓ Render complete - points, paths, and torch segments displayed")
 
                 # Scroll to bottom of points list
                 self.points_list.scrollToBottom()
@@ -931,6 +989,22 @@ class RoboWatchGUI(QMainWindow):
         # Update label
         self.specular_label.setText(f"Specular: {value}%")
 
+    def on_torch_distance_change(self, value):
+        """Handle torch distance slider change (0-30 = 0.0-3.0mm)"""
+        # Convert slider value (0-30) to mm (0.0-3.0)
+        self.torch_distance = value / 10.0
+
+        # Update label
+        self.torch_distance_label.setText(f"Torch Distance: {self.torch_distance:.1f}mm")
+
+        # Update torch segments in the viewer
+        self.update_torch_segments()
+
+        # Render only once after updating segments
+        if self.plotter:
+            self.plotter.render_window.Render()
+            QApplication.instance().processEvents()
+
     def toggle_mesh_edges(self):
         """Toggle mesh edges visibility"""
         if not self.plotter or not self.mesh_actor:
@@ -1025,6 +1099,13 @@ class RoboWatchGUI(QMainWindow):
             return
 
         try:
+            # Make sure point picking observer is removed before freezing
+            try:
+                self.plotter.iren.remove_observer('LeftButtonPressEvent')
+                print("  ✓ Removed point picking observer")
+            except:
+                pass  # Observer might not exist
+
             # Restore the saved camera state from when mesh was loaded
             self.plotter.camera.position = self.saved_camera_state['position']
             self.plotter.camera.focal_point = self.saved_camera_state['focal_point']
@@ -1130,6 +1211,13 @@ class RoboWatchGUI(QMainWindow):
             return
 
         try:
+            # Make sure point picking observer is removed before freezing
+            try:
+                self.plotter.iren.remove_observer('LeftButtonPressEvent')
+                print("  ✓ Removed point picking observer")
+            except:
+                pass  # Observer might not exist
+
             # Restore the saved side camera state
             self.plotter.camera.position = self.saved_side_camera_state['position']
             self.plotter.camera.focal_point = self.saved_side_camera_state['focal_point']
@@ -1380,10 +1468,15 @@ class RoboWatchGUI(QMainWindow):
             # Remove mouse click callback
             self._remove_point_picking()
 
-    def add_picked_point(self, point):
+    def add_picked_point(self, point, normal=None):
         """Add a point to the picked points list and connect with previous point"""
         self.picked_points.append(point)
         self.point_path_id.append(self.current_path_id)
+
+        # Store the normal at this point (default to upward if not provided)
+        if normal is None:
+            normal = np.array([0, 0, 1])
+        self.point_normals.append(normal)
 
         # Count how many points are in the current path
         points_in_current_path = sum(1 for pid in self.point_path_id if pid == self.current_path_id)
@@ -1399,6 +1492,7 @@ class RoboWatchGUI(QMainWindow):
         self.points_list.scrollToBottom()
         print(f"Added point: {point}")
         self.update_markers()
+        self.update_torch_segments()  # Update torch segments
         self.update_path()  # Update path lines between consecutive points
 
     def update_markers(self):
@@ -1494,17 +1588,67 @@ class RoboWatchGUI(QMainWindow):
         self.plotter.render_window.Render()
         QApplication.instance().processEvents()
 
+    def update_torch_segments(self):
+        """Update torch distance segments (perpendicular to surface at each point)"""
+        # Skip if no plotter
+        if not self.plotter:
+            return
+
+        # Remove old torch segments
+        if self.torch_segments_actor is not None:
+            self.plotter.remove_actor(self.torch_segments_actor)
+            self.torch_segments_actor = None
+
+        # Need at least 1 point to draw segments
+        if len(self.picked_points) == 0:
+            return
+
+        # Create line segments from each point along its normal
+        torch_lines = []
+        for i, point in enumerate(self.picked_points):
+            if i < len(self.point_normals):
+                normal = self.point_normals[i]
+                # Calculate the end point of the torch segment
+                end_point = point + normal * self.torch_distance
+                torch_lines.append([point, end_point])
+
+        if torch_lines:
+            torch_lines_array = np.array(torch_lines)
+            # Flatten to (n*2, 3) for add_lines format
+            line_points = torch_lines_array.reshape(-1, 3)
+
+            # Create connectivity array: [2, p0, p1, 2, p2, p3, ...]
+            # This tells PyVista to draw lines between consecutive pairs
+            connectivity = []
+            for i in range(0, len(line_points), 2):
+                connectivity.extend([2, i, i + 1])
+
+            # Create a polydata object with the torch line segments
+            from pyvista import PolyData
+            torch_polydata = PolyData(line_points, connectivity)
+
+            # Add the torch lines to the plotter (red color)
+            self.torch_segments_actor = self.plotter.add_mesh(
+                torch_polydata,
+                color='red',
+                line_width=2,
+                style='wireframe'
+            )
+
     def clear_points(self):
         """Clear points based on 'all' radio button state"""
         if self.clear_all_radio.isChecked():
             # Clear all points
             self.picked_points = []
+            self.point_normals = []
             self.points_list.clear()
             print("All points cleared")
         else:
             # Clear only the last point
             if len(self.picked_points) > 0:
                 removed_point = self.picked_points.pop()
+                if self.point_normals:
+                    self.point_normals.pop()
                 self.points_list.takeItem(self.points_list.count() - 1)
                 print(f"Removed last point: ({removed_point[0]:.2f}, {removed_point[1]:.2f}, {removed_point[2]:.2f})")
             else:
@@ -1512,10 +1656,47 @@ class RoboWatchGUI(QMainWindow):
 
         # Update visualization
         self.update_markers()
+        self.update_torch_segments()  # Update torch segments after clearing points
         self.update_path()  # Update path lines after clearing points
         # Force immediate render update
         self.plotter.render_window.Render()
         QApplication.instance().processEvents()
+
+    def _calculate_surface_normal(self, point):
+        """Calculate the surface normal at a given point on the mesh"""
+        try:
+            # Recompute normals to ensure they're accurate (not just relying on cached normals)
+            self.current_mesh.compute_normals(inplace=True, cell_normals=False, point_normals=True)
+
+            # Find the closest point on the mesh
+            closest_point_id = self.current_mesh.find_closest_point(point)
+
+            # Get the normal at that point
+            normals = self.current_mesh.active_normals
+            if normals is not None and closest_point_id < len(normals):
+                normal = np.array(normals[closest_point_id])
+
+                # Normalize the normal vector
+                norm_magnitude = np.linalg.norm(normal)
+                if norm_magnitude > 0:
+                    normal = normal / norm_magnitude
+                else:
+                    print(f"  ! Warning: Normal magnitude is zero at point {point}")
+                    return np.array([0, 0, 1])
+
+                print(f"  ✓ Calculated normal at point {point}: {normal}")
+                return normal
+            else:
+                # Fallback: return a default upward normal
+                print(f"  ! Warning: Could not get normal from mesh at point {point}, using default (0, 0, 1)")
+                return np.array([0, 0, 1])
+
+        except Exception as e:
+            print(f"Error calculating surface normal: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback: return a default upward normal
+            return np.array([0, 0, 1])
 
     def _setup_point_picking(self):
         """Setup mouse click callback for point picking on the mesh"""
@@ -1567,8 +1748,11 @@ class RoboWatchGUI(QMainWindow):
                 # Get the picked position
                 picked_position = picker.GetPickPosition()
 
+                # Calculate surface normal at the picked point
+                normal = self._calculate_surface_normal(picked_position)
+
                 # Add the point
-                self.add_picked_point(picked_position)
+                self.add_picked_point(picked_position, normal)
 
                 # Force render update to show the point
                 self.plotter.render_window.Render()
