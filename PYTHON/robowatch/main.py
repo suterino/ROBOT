@@ -70,8 +70,9 @@ class RoboWatchGUI(QMainWindow):
         self.torch_distance = 1.0  # Default torch distance in mm
 
         # Simulation mode variables
-        self.torch_actor = None  # The torch cylinder actor
-        self.torch_orientation_line_actor = None  # The white orientation line actor
+        self.torch_endpoint_marker_actor = None  # The black point at torch endpoint in simulation
+        self.torch_segment_markers_actor = None  # The black points at torch endpoints for all segments
+        self.simulation_cone_actor = None  # The cone in simulation mode
         self.simulation_mode = False  # Whether we're in simulation
         self.selected_path_id = None  # Which path is selected
         self.current_point_index = 0  # Current point in the path
@@ -799,13 +800,13 @@ class RoboWatchGUI(QMainWindow):
                 "background-color: #888888; color: #cccccc; font-weight: bold; padding: 4px; font-size: 9px;"
             )
 
-            # Remove torch and orientation line
-            if self.torch_actor is not None and self.plotter:
-                self.plotter.remove_actor(self.torch_actor)
-                self.torch_actor = None
-            if self.torch_orientation_line_actor is not None and self.plotter:
-                self.plotter.remove_actor(self.torch_orientation_line_actor)
-                self.torch_orientation_line_actor = None
+            # Remove torch endpoint marker and simulation cone
+            if self.torch_endpoint_marker_actor is not None and self.plotter:
+                self.plotter.remove_actor(self.torch_endpoint_marker_actor)
+                self.torch_endpoint_marker_actor = None
+            if self.simulation_cone_actor is not None and self.plotter:
+                self.plotter.remove_actor(self.simulation_cone_actor)
+                self.simulation_cone_actor = None
             if self.plotter:
                 self.plotter.render_window.Render()
                 QApplication.instance().processEvents()
@@ -917,60 +918,71 @@ class RoboWatchGUI(QMainWindow):
             print(f"Already at first point of path {self.selected_path_id}")
 
     def create_or_update_torch(self, position, normal):
-        """Create or update the torch cylinder at given position and orientation"""
+        """Create or update the torch in simulation mode"""
         if not self.plotter:
             return
 
-        # Remove old torch if exists
-        if self.torch_actor is not None:
-            self.plotter.remove_actor(self.torch_actor)
-            self.torch_actor = None
+        # Remove old endpoint marker if exists
+        if self.torch_endpoint_marker_actor is not None:
+            self.plotter.remove_actor(self.torch_endpoint_marker_actor)
+            self.torch_endpoint_marker_actor = None
 
-        # Remove old orientation line if exists
-        if self.torch_orientation_line_actor is not None:
-            self.plotter.remove_actor(self.torch_orientation_line_actor)
-            self.torch_orientation_line_actor = None
-
-        # Torch parameters - small cylinder extending from the vertical line
-        torch_radius = 0.8  # mm - slightly bigger than the vertical lines
-        torch_height = 4.0  # mm - 1/5 of original 20mm
-        torch_color = 'green'
+        # Remove old simulation cone if exists
+        if self.simulation_cone_actor is not None:
+            self.plotter.remove_actor(self.simulation_cone_actor)
+            self.simulation_cone_actor = None
 
         try:
-            # Create cylinder aligned with the normal direction
-            # Default cylinder is aligned with Z axis
-            torch_cyl = pv.Cylinder(radius=torch_radius, height=torch_height, direction=(0, 0, 1))
+            # Create black point marker at the torch endpoint (50% size of colored points)
+            # Colored points use point_size=10, so endpoint marker uses point_size=5
+            endpoint_point = np.array([position])
 
-            # Rotate cylinder to align with normal
-            # Calculate rotation axis and angle
-            default_normal = np.array([0, 0, 1])
-            normal_normalized = normal / np.linalg.norm(normal)
+            # Add endpoint marker to plotter
+            self.torch_endpoint_marker_actor = self.plotter.add_points(
+                endpoint_point,
+                color='black',
+                point_size=5,
+                render_points_as_spheres=True
+            )
 
-            # Calculate rotation
-            rotation_axis = np.cross(default_normal, normal_normalized)
-            rotation_magnitude = np.linalg.norm(rotation_axis)
+            # If in simulation mode, also add a cone from the picked point to the torch endpoint
+            if self.simulation_mode and self.selected_path_id is not None:
+                # Find the picked point (green point) for this location
+                path_point_indices = [i for i, pid in enumerate(self.point_path_id) if pid == self.selected_path_id]
+                if path_point_indices and self.current_point_index < len(path_point_indices):
+                    global_index = path_point_indices[self.current_point_index]
+                    picked_point = np.array(self.picked_points[global_index])
+                    normal_normalized = normal / np.linalg.norm(normal)
 
-            if rotation_magnitude > 1e-6:  # Only rotate if axis is significant
-                rotation_axis = rotation_axis / rotation_magnitude
-                rotation_angle = np.arccos(np.clip(np.dot(default_normal, normal_normalized), -1.0, 1.0))
-                rotation_angle_deg = np.degrees(rotation_angle)
+                    # Create cone with height = torch_distance
+                    cone_height = self.torch_distance
+                    cone_radius = 0.6  # mm - slightly smaller radius
 
-                # Rotate the cylinder
-                torch_cyl = torch_cyl.rotate_vector(rotation_axis, rotation_angle_deg, point=torch_cyl.center)
+                    # Create cone aligned with Z axis
+                    sim_cone = pv.Cone(radius=cone_radius, height=cone_height, direction=(0, 0, 1))
 
-            # Position the torch so it starts at the tip of the vertical line and extends along the normal
-            # The cylinder's center should be at: position + (torch_height / 2) * normal_normalized
-            torch_center = position + normal_normalized * (torch_height / 2)
-            torch_cyl = torch_cyl.translate(torch_center - torch_cyl.center)
+                    # Rotate cone to align with normal direction
+                    default_normal = np.array([0, 0, 1])
+                    rotation_axis = np.cross(default_normal, normal_normalized)
+                    rotation_magnitude = np.linalg.norm(rotation_axis)
 
-            # Add white orientation line on the side of the cylinder
-            line_start = torch_center
-            line_end = torch_center + np.array([torch_radius * 0.6, 0, 0])  # Line extends radially
-            orientation_line = pv.Line(line_start, line_end)
+                    if rotation_magnitude > 1e-6:  # Only rotate if axis is significant
+                        rotation_axis = rotation_axis / rotation_magnitude
+                        rotation_angle = np.arccos(np.clip(np.dot(default_normal, normal_normalized), -1.0, 1.0))
+                        rotation_angle_deg = np.degrees(rotation_angle)
+                        sim_cone = sim_cone.rotate_vector(rotation_axis, rotation_angle_deg, point=sim_cone.center)
 
-            # Add torch to plotter and store references
-            self.torch_actor = self.plotter.add_mesh(torch_cyl, color=torch_color, opacity=0.8)
-            self.torch_orientation_line_actor = self.plotter.add_mesh(orientation_line, color='white', line_width=2)
+                    # Position cone so tip is at torch endpoint (black point) and base is at picked_point (green point)
+                    # The cone center should be at: position - (cone_height / 2) * normal_normalized
+                    cone_center = position - normal_normalized * (cone_height / 2)
+                    sim_cone = sim_cone.translate(cone_center - sim_cone.center)
+
+                    # Add cone to plotter
+                    self.simulation_cone_actor = self.plotter.add_mesh(
+                        sim_cone,
+                        color='green',
+                        opacity=0.6
+                    )
 
             # Render
             self.plotter.render_window.Render()
@@ -1894,7 +1906,7 @@ class RoboWatchGUI(QMainWindow):
         QApplication.instance().processEvents()
 
     def update_torch_segments(self):
-        """Update torch distance segments (perpendicular to surface at each point)"""
+        """Update torch distance segments (perpendicular to surface at each point) with endpoint markers"""
         # Skip if no plotter
         if not self.plotter:
             return
@@ -1904,18 +1916,33 @@ class RoboWatchGUI(QMainWindow):
             self.plotter.remove_actor(self.torch_segments_actor)
             self.torch_segments_actor = None
 
+        # Remove old segment markers
+        if self.torch_segment_markers_actor is not None:
+            self.plotter.remove_actor(self.torch_segment_markers_actor)
+            self.torch_segment_markers_actor = None
+
         # Need at least 1 point to draw segments
         if len(self.picked_points) == 0:
             return
 
         # Create line segments from each point along its normal
+        # Fixed line length of 20mm
+        fixed_line_length = 20.0  # mm
         torch_lines = []
+        endpoint_markers = []
+
         for i, point in enumerate(self.picked_points):
             if i < len(self.point_normals):
                 normal = self.point_normals[i]
-                # Calculate the end point of the torch segment
-                end_point = point + normal * self.torch_distance
-                torch_lines.append([point, end_point])
+                normal_normalized = normal / np.linalg.norm(normal)
+
+                # The line extends 20mm along the normal (fixed length)
+                line_end_point = point + normal_normalized * fixed_line_length
+                torch_lines.append([point, line_end_point])
+
+                # The black point marker is at the torch_distance position (not at the end of the line)
+                torch_endpoint = point + normal_normalized * self.torch_distance
+                endpoint_markers.append(torch_endpoint)
 
         if torch_lines:
             torch_lines_array = np.array(torch_lines)
@@ -1939,6 +1966,17 @@ class RoboWatchGUI(QMainWindow):
                 line_width=2,
                 style='wireframe'
             )
+
+            # Add black endpoint markers at torch_distance position along each vertical line
+            # 50% size of the green/red points (point_size=5 vs 10)
+            if endpoint_markers:
+                endpoint_markers_array = np.array(endpoint_markers)
+                self.torch_segment_markers_actor = self.plotter.add_points(
+                    endpoint_markers_array,
+                    color='black',
+                    point_size=5,
+                    render_points_as_spheres=True
+                )
 
     def clear_points(self):
         """Clear points based on 'all' radio button state"""
@@ -1973,9 +2011,11 @@ class RoboWatchGUI(QMainWindow):
         self.update_markers()
         self.update_torch_segments()  # Update torch segments after clearing points
         self.update_path()  # Update path lines after clearing points
+
         # Force immediate render update
-        self.plotter.render_window.Render()
-        QApplication.instance().processEvents()
+        if self.plotter:
+            self.plotter.render_window.Render()
+            QApplication.instance().processEvents()
 
     def _calculate_surface_normal(self, point):
         """Calculate the surface normal at a given point on the mesh"""
