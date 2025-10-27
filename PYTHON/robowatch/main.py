@@ -72,7 +72,7 @@ class RoboWatchGUI(QMainWindow):
         # Simulation mode variables
         self.torch_endpoint_marker_actor = None  # The black point at torch endpoint in simulation
         self.torch_segment_markers_actor = None  # The black points at torch endpoints for all segments
-        self.simulation_cone_actor = None  # The cone in simulation mode
+        self.simulation_cylinder_actor = None  # The cylinder in simulation mode
         self.simulation_mode = False  # Whether we're in simulation
         self.selected_path_id = None  # Which path is selected
         self.current_point_index = 0  # Current point in the path
@@ -800,13 +800,13 @@ class RoboWatchGUI(QMainWindow):
                 "background-color: #888888; color: #cccccc; font-weight: bold; padding: 4px; font-size: 9px;"
             )
 
-            # Remove torch endpoint marker and simulation cone
+            # Remove torch endpoint marker and simulation cylinder
             if self.torch_endpoint_marker_actor is not None and self.plotter:
                 self.plotter.remove_actor(self.torch_endpoint_marker_actor)
                 self.torch_endpoint_marker_actor = None
-            if self.simulation_cone_actor is not None and self.plotter:
-                self.plotter.remove_actor(self.simulation_cone_actor)
-                self.simulation_cone_actor = None
+            if self.simulation_cylinder_actor is not None and self.plotter:
+                self.plotter.remove_actor(self.simulation_cylinder_actor)
+                self.simulation_cylinder_actor = None
             if self.plotter:
                 self.plotter.render_window.Render()
                 QApplication.instance().processEvents()
@@ -927,10 +927,10 @@ class RoboWatchGUI(QMainWindow):
             self.plotter.remove_actor(self.torch_endpoint_marker_actor)
             self.torch_endpoint_marker_actor = None
 
-        # Remove old simulation cone if exists
-        if self.simulation_cone_actor is not None:
-            self.plotter.remove_actor(self.simulation_cone_actor)
-            self.simulation_cone_actor = None
+        # Remove old simulation cylinder if exists
+        if self.simulation_cylinder_actor is not None:
+            self.plotter.remove_actor(self.simulation_cylinder_actor)
+            self.simulation_cylinder_actor = None
 
         try:
             # Create black point marker at the torch endpoint (50% size of colored points)
@@ -945,44 +945,43 @@ class RoboWatchGUI(QMainWindow):
                 render_points_as_spheres=True
             )
 
-            # If in simulation mode, also add a cone from the picked point to the torch endpoint
+            # If in simulation mode, create a 4mm cylinder aligned with the normal
             if self.simulation_mode and self.selected_path_id is not None:
-                # Find the picked point (green point) for this location
-                path_point_indices = [i for i, pid in enumerate(self.point_path_id) if pid == self.selected_path_id]
-                if path_point_indices and self.current_point_index < len(path_point_indices):
-                    global_index = path_point_indices[self.current_point_index]
-                    picked_point = np.array(self.picked_points[global_index])
-                    normal_normalized = normal / np.linalg.norm(normal)
+                # Normalize the normal vector
+                normal_normalized = normal / np.linalg.norm(normal)
 
-                    # Create cone with height = torch_distance
-                    cone_height = self.torch_distance
-                    cone_radius = 0.6  # mm - slightly smaller radius
+                # Cylinder specifications:
+                # - Height: 4mm (fixed)
+                # - Center: at the position (black point)
+                # - Axis: along the normal direction
+                cylinder_height = 4.0  # mm
+                cylinder_radius = 0.3  # mm - small radius
 
-                    # Create cone aligned with Z axis
-                    sim_cone = pv.Cone(radius=cone_radius, height=cone_height, direction=(0, 0, 1))
+                # Create cylinder aligned with Z axis
+                sim_cylinder = pv.Cylinder(radius=cylinder_radius, height=cylinder_height, direction=(0, 0, 1))
 
-                    # Rotate cone to align with normal direction
-                    default_normal = np.array([0, 0, 1])
-                    rotation_axis = np.cross(default_normal, normal_normalized)
-                    rotation_magnitude = np.linalg.norm(rotation_axis)
+                # Rotate cylinder to align with normal direction
+                default_normal = np.array([0, 0, 1])
+                rotation_axis = np.cross(default_normal, normal_normalized)
+                rotation_magnitude = np.linalg.norm(rotation_axis)
 
-                    if rotation_magnitude > 1e-6:  # Only rotate if axis is significant
-                        rotation_axis = rotation_axis / rotation_magnitude
-                        rotation_angle = np.arccos(np.clip(np.dot(default_normal, normal_normalized), -1.0, 1.0))
-                        rotation_angle_deg = np.degrees(rotation_angle)
-                        sim_cone = sim_cone.rotate_vector(rotation_axis, rotation_angle_deg, point=sim_cone.center)
+                if rotation_magnitude > 1e-6:  # Only rotate if axis is significant
+                    rotation_axis = rotation_axis / rotation_magnitude
+                    rotation_angle = np.arccos(np.clip(np.dot(default_normal, normal_normalized), -1.0, 1.0))
+                    rotation_angle_deg = np.degrees(rotation_angle)
+                    sim_cylinder = sim_cylinder.rotate_vector(rotation_axis, rotation_angle_deg, point=sim_cylinder.center)
 
-                    # Position cone so tip is at torch endpoint (black point) and base is at picked_point (green point)
-                    # The cone center should be at: position - (cone_height / 2) * normal_normalized
-                    cone_center = position - normal_normalized * (cone_height / 2)
-                    sim_cone = sim_cone.translate(cone_center - sim_cone.center)
+                # Position cylinder so one base is at the black point and other base extends away
+                # The cylinder center should be at: position + normal_normalized * (cylinder_height / 2)
+                cylinder_center = position + normal_normalized * (cylinder_height / 2)
+                sim_cylinder = sim_cylinder.translate(cylinder_center - sim_cylinder.center)
 
-                    # Add cone to plotter
-                    self.simulation_cone_actor = self.plotter.add_mesh(
-                        sim_cone,
-                        color='green',
-                        opacity=0.6
-                    )
+                # Add cylinder to plotter
+                self.simulation_cylinder_actor = self.plotter.add_mesh(
+                    sim_cylinder,
+                    color='green',
+                    opacity=0.6
+                )
 
             # Render
             self.plotter.render_window.Render()
