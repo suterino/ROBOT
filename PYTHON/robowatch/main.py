@@ -945,22 +945,51 @@ class RoboWatchGUI(QMainWindow):
                 render_points_as_spheres=True
             )
 
-            # If in simulation mode, create a 4mm cylinder aligned with the normal
+            # If in simulation mode, create a 4mm truncated cone aligned with the normal
             if self.simulation_mode and self.selected_path_id is not None:
                 # Normalize the normal vector
                 normal_normalized = normal / np.linalg.norm(normal)
 
-                # Cylinder specifications:
+                # Truncated cone specifications:
                 # - Height: 4mm (fixed)
-                # - Center: at the position (black point)
+                # - Small base (at black point): radius = 0.15mm (1/2 of large base)
+                # - Large base (far end): radius = 0.3mm
                 # - Axis: along the normal direction
-                cylinder_height = 4.0  # mm
-                cylinder_radius = 0.3  # mm - small radius
+                cone_height = 4.0  # mm
+                large_radius = 0.3  # mm
+                small_radius = large_radius / 2.0  # 0.15 mm
+                num_sides = 32  # Number of sides for smooth cone
 
-                # Create cylinder aligned with Z axis
-                sim_cylinder = pv.Cylinder(radius=cylinder_radius, height=cylinder_height, direction=(0, 0, 1))
+                # Create truncated cone mesh (frustum)
+                # Generate points on two circular bases
+                points = []
+                angles = np.linspace(0, 2*np.pi, num_sides, endpoint=False)
 
-                # Rotate cylinder to align with normal direction
+                # Small base at z=0 (will be at black point after translation)
+                for angle in angles:
+                    x = small_radius * np.cos(angle)
+                    y = small_radius * np.sin(angle)
+                    points.append([x, y, 0])
+
+                # Large base at z=cone_height (will be far from object after translation)
+                for angle in angles:
+                    x = large_radius * np.cos(angle)
+                    y = large_radius * np.sin(angle)
+                    points.append([x, y, cone_height])
+
+                points = np.array(points)
+
+                # Create faces connecting the two circles
+                faces = []
+                for i in range(num_sides):
+                    i_next = (i + 1) % num_sides
+                    # Quad face connecting small base to large base
+                    faces.append([4, i, i_next, num_sides + i_next, num_sides + i])
+
+                # Create the truncated cone mesh
+                sim_cone = pv.PolyData(points, faces)
+
+                # Rotate truncated cone to align with normal direction
                 default_normal = np.array([0, 0, 1])
                 rotation_axis = np.cross(default_normal, normal_normalized)
                 rotation_magnitude = np.linalg.norm(rotation_axis)
@@ -969,16 +998,14 @@ class RoboWatchGUI(QMainWindow):
                     rotation_axis = rotation_axis / rotation_magnitude
                     rotation_angle = np.arccos(np.clip(np.dot(default_normal, normal_normalized), -1.0, 1.0))
                     rotation_angle_deg = np.degrees(rotation_angle)
-                    sim_cylinder = sim_cylinder.rotate_vector(rotation_axis, rotation_angle_deg, point=sim_cylinder.center)
+                    sim_cone = sim_cone.rotate_vector(rotation_axis, rotation_angle_deg, point=[0, 0, 0])
 
-                # Position cylinder so one base is at the black point and other base extends away
-                # The cylinder center should be at: position + normal_normalized * (cylinder_height / 2)
-                cylinder_center = position + normal_normalized * (cylinder_height / 2)
-                sim_cylinder = sim_cylinder.translate(cylinder_center - sim_cylinder.center)
+                # Position truncated cone so small base is at the black point
+                sim_cone = sim_cone.translate(position)
 
-                # Add cylinder to plotter
+                # Add truncated cone to plotter
                 self.simulation_cylinder_actor = self.plotter.add_mesh(
-                    sim_cylinder,
+                    sim_cone,
                     color='green',
                     opacity=0.6
                 )
