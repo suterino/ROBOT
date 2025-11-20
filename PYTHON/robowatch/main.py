@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QVBoxLayout
                              QHBoxLayout, QWidget, QPushButton, QLabel, QListWidget,
                              QListWidgetItem, QDockWidget, QCheckBox, QSlider, QSpinBox, QRadioButton, QComboBox)
 from PyQt6.QtGui import QAction
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 
 import numpy as np
 import pyvista as pv
@@ -72,10 +72,19 @@ class RoboWatchGUI(QMainWindow):
         # Simulation mode variables
         self.torch_endpoint_marker_actor = None  # The black point at torch endpoint in simulation
         self.torch_segment_markers_actor = None  # The black points at torch endpoints for all segments
+        self.first_path_marker_actor = None  # The blue point for first Path 1 endpoint
+        self.first_path_line_actor = None  # The blue line for first Path 1
+        self.first_path_arrows_actor = None  # The arrows on the blue line
         self.simulation_cylinder_actor = None  # The cylinder in simulation mode
         self.simulation_mode = False  # Whether we're in simulation
         self.selected_path_id = None  # Which path is selected
         self.current_point_index = 0  # Current point in the path
+
+        # View interaction state
+        self.view_3d_frozen = False  # Global variable: True when Top or Side view is active, False when both deselected
+        self.frozen_timer = QTimer()  # Timer to maintain frozen state
+        self.frozen_timer.timeout.connect(self._maintain_frozen_state)
+        self.frozen_timer.setInterval(10)  # Check every 10ms for responsive frozen state
 
         # Lighting properties
         self.ambient_light = 0.3  # Default ambient light
@@ -947,68 +956,73 @@ class RoboWatchGUI(QMainWindow):
 
             # If in simulation mode, create a 4mm truncated cone aligned with the normal
             if self.simulation_mode and self.selected_path_id is not None:
-                # Normalize the normal vector
-                normal_normalized = normal / np.linalg.norm(normal)
+                try:
+                    # Normalize the normal vector
+                    normal_normalized = normal / np.linalg.norm(normal)
 
-                # Truncated cone specifications:
-                # - Height: 4mm (fixed)
-                # - Small base (at black point): radius = 0.15mm (1/2 of large base)
-                # - Large base (far end): radius = 0.3mm
-                # - Axis: along the normal direction
-                cone_height = 4.0  # mm
-                large_radius = 0.3  # mm
-                small_radius = large_radius / 2.0  # 0.15 mm
-                num_sides = 32  # Number of sides for smooth cone
+                    # Truncated cone specifications:
+                    # - Height: 4mm (fixed)
+                    # - Small base (at black point): radius = 0.0375mm (1/8 of large base)
+                    # - Large base (far end): radius = 0.3mm
+                    # - Axis: along the normal direction
+                    cone_height = 4.0  # mm
+                    large_radius = 0.3  # mm
+                    small_radius = large_radius / 8.0  # 0.0375 mm
+                    num_sides = 32  # Number of sides for smooth cone
 
-                # Create truncated cone mesh (frustum)
-                # Generate points on two circular bases
-                points = []
-                angles = np.linspace(0, 2*np.pi, num_sides, endpoint=False)
+                    # Create truncated cone mesh (frustum)
+                    # Generate points on two circular bases
+                    points = []
+                    angles = np.linspace(0, 2*np.pi, num_sides, endpoint=False)
 
-                # Small base at z=0 (will be at black point after translation)
-                for angle in angles:
-                    x = small_radius * np.cos(angle)
-                    y = small_radius * np.sin(angle)
-                    points.append([x, y, 0])
+                    # Small base at z=0 (will be at black point after translation)
+                    for angle in angles:
+                        x = small_radius * np.cos(angle)
+                        y = small_radius * np.sin(angle)
+                        points.append([x, y, 0])
 
-                # Large base at z=cone_height (will be far from object after translation)
-                for angle in angles:
-                    x = large_radius * np.cos(angle)
-                    y = large_radius * np.sin(angle)
-                    points.append([x, y, cone_height])
+                    # Large base at z=cone_height (will be far from object after translation)
+                    for angle in angles:
+                        x = large_radius * np.cos(angle)
+                        y = large_radius * np.sin(angle)
+                        points.append([x, y, cone_height])
 
-                points = np.array(points)
+                    points = np.array(points)
 
-                # Create faces connecting the two circles
-                faces = []
-                for i in range(num_sides):
-                    i_next = (i + 1) % num_sides
-                    # Quad face connecting small base to large base
-                    faces.append([4, i, i_next, num_sides + i_next, num_sides + i])
+                    # Create faces connecting the two circles
+                    faces = []
+                    for i in range(num_sides):
+                        i_next = (i + 1) % num_sides
+                        # Quad face connecting small base to large base
+                        faces.append([4, i, i_next, num_sides + i_next, num_sides + i])
 
-                # Create the truncated cone mesh
-                sim_cone = pv.PolyData(points, faces)
+                    # Create the truncated cone mesh
+                    sim_cone = pv.PolyData(points, faces)
 
-                # Rotate truncated cone to align with normal direction
-                default_normal = np.array([0, 0, 1])
-                rotation_axis = np.cross(default_normal, normal_normalized)
-                rotation_magnitude = np.linalg.norm(rotation_axis)
+                    # Rotate truncated cone to align with normal direction
+                    default_normal = np.array([0, 0, 1])
+                    rotation_axis = np.cross(default_normal, normal_normalized)
+                    rotation_magnitude = np.linalg.norm(rotation_axis)
 
-                if rotation_magnitude > 1e-6:  # Only rotate if axis is significant
-                    rotation_axis = rotation_axis / rotation_magnitude
-                    rotation_angle = np.arccos(np.clip(np.dot(default_normal, normal_normalized), -1.0, 1.0))
-                    rotation_angle_deg = np.degrees(rotation_angle)
-                    sim_cone = sim_cone.rotate_vector(rotation_axis, rotation_angle_deg, point=[0, 0, 0])
+                    if rotation_magnitude > 1e-6:  # Only rotate if axis is significant
+                        rotation_axis = rotation_axis / rotation_magnitude
+                        rotation_angle = np.arccos(np.clip(np.dot(default_normal, normal_normalized), -1.0, 1.0))
+                        rotation_angle_deg = np.degrees(rotation_angle)
+                        sim_cone = sim_cone.rotate_vector(rotation_axis, rotation_angle_deg, point=[0, 0, 0])
 
-                # Position truncated cone so small base is at the black point
-                sim_cone = sim_cone.translate(position)
+                    # Position truncated cone so small base is at the black point
+                    sim_cone = sim_cone.translate(position)
 
-                # Add truncated cone to plotter
-                self.simulation_cylinder_actor = self.plotter.add_mesh(
-                    sim_cone,
-                    color='green',
-                    opacity=0.6
-                )
+                    # Add truncated cone to plotter
+                    self.simulation_cylinder_actor = self.plotter.add_mesh(
+                        sim_cone,
+                        color='green',
+                        opacity=0.6
+                    )
+                except Exception as cone_error:
+                    print(f"Error creating truncated cone: {cone_error}")
+                    import traceback
+                    traceback.print_exc()
 
             # Render
             self.plotter.render_window.Render()
@@ -1397,7 +1411,11 @@ class RoboWatchGUI(QMainWindow):
                 "background-color: #FF9800; color: white; font-weight: bold; padding: 8px;"
             )
 
+            # Set 3D view as frozen (Top or Side is active)
+            self.view_3d_frozen = True
             self.set_top_view()
+            if not self.frozen_timer.isActive():
+                self.frozen_timer.start()
             print("Top View mode ON - Side view disabled - CW/CCW buttons enabled - add point enabled")
         else:
             # Deactivate Top view
@@ -1431,8 +1449,44 @@ class RoboWatchGUI(QMainWindow):
             )
             self.add_point_btn.setText("add point")
 
+            # Update view_3d_frozen: true only if Side is still active
+            self.view_3d_frozen = self.side_view_mode
+            if not self.view_3d_frozen:
+                # Both Top and Side are now deselected
+                if self.frozen_timer.isActive():
+                    self.frozen_timer.stop()
+
             self.restore_normal_view()
             print("Top View mode OFF - Side view re-enabled - CW/CCW buttons disabled - add point disabled")
+
+    def _maintain_frozen_state(self):
+        """Maintain 3D view frozen state when view_3d_frozen is True"""
+        if not self.view_3d_frozen or not self.plotter or not hasattr(self.plotter, 'iren'):
+            # Stop the timer if we're not frozen anymore
+            if self.frozen_timer.isActive():
+                self.frozen_timer.stop()
+            return
+
+        try:
+            # Use vtkInteractorStyleNone to prevent any interaction
+            from vtkmodules.vtkRenderingCore import vtkInteractorStyleNone
+            frozen_style = vtkInteractorStyleNone()
+            self.plotter.iren.SetInteractorStyle(frozen_style)
+
+            # Also remove all mouse event observers to prevent any mouse handling
+            iren = self.plotter.iren
+            iren.RemoveObservers('MouseMoveEvent')
+            iren.RemoveObservers('LeftButtonPressEvent')
+            iren.RemoveObservers('LeftButtonReleaseEvent')
+            iren.RemoveObservers('RightButtonPressEvent')
+            iren.RemoveObservers('RightButtonReleaseEvent')
+            iren.RemoveObservers('MiddleButtonPressEvent')
+            iren.RemoveObservers('MiddleButtonReleaseEvent')
+            iren.RemoveObservers('MouseWheelForwardEvent')
+            iren.RemoveObservers('MouseWheelBackwardEvent')
+
+        except Exception as e:
+            pass  # Silently fail if interaction style can't be applied
 
     def set_top_view(self):
         """Set camera to top view - restore initial camera position and freeze interaction"""
@@ -1459,13 +1513,16 @@ class RoboWatchGUI(QMainWindow):
                     from vtkmodules.vtkRenderingCore import vtkInteractorStyleNone
                     frozen_style = vtkInteractorStyleNone()
                     self.plotter.iren.SetInteractorStyle(frozen_style)
-                    print("  ✓ Mouse interaction FROZEN")
+                    print("  ✓ Mouse interaction FROZEN (view_3d_frozen = True)")
                 except Exception as freeze_error:
                     print(f"  ! Warning: Could not freeze interaction: {freeze_error}")
 
             # Force render update
             self.plotter.render_window.Render()
             QApplication.instance().processEvents()
+
+            # Reapply frozen style after render using the maintained state
+            self._maintain_frozen_state()
 
             print("Top view restored - camera position:")
             print(f"  Position: {self.plotter.camera.position}")
@@ -1509,7 +1566,11 @@ class RoboWatchGUI(QMainWindow):
                 "background-color: #FF9800; color: white; font-weight: bold; padding: 8px;"
             )
 
+            # Set 3D view as frozen (Top or Side is active)
+            self.view_3d_frozen = True
             self.set_side_view()
+            if not self.frozen_timer.isActive():
+                self.frozen_timer.start()
             print("Side View mode ON - Top view disabled - CW/CCW buttons enabled - add point enabled")
         else:
             # Deactivate Side view
@@ -1543,6 +1604,13 @@ class RoboWatchGUI(QMainWindow):
             )
             self.add_point_btn.setText("add point")
 
+            # Update view_3d_frozen: true only if Top is still active
+            self.view_3d_frozen = self.top_view_mode
+            if not self.view_3d_frozen:
+                # Both Top and Side are now deselected
+                if self.frozen_timer.isActive():
+                    self.frozen_timer.stop()
+
             self.restore_normal_view()
             print("Side View mode OFF - Top view re-enabled - CW/CCW buttons disabled - add point disabled")
 
@@ -1571,13 +1639,16 @@ class RoboWatchGUI(QMainWindow):
                     from vtkmodules.vtkRenderingCore import vtkInteractorStyleNone
                     frozen_style = vtkInteractorStyleNone()
                     self.plotter.iren.SetInteractorStyle(frozen_style)
-                    print("  ✓ Mouse interaction FROZEN")
+                    print("  ✓ Mouse interaction FROZEN (view_3d_frozen = True)")
                 except Exception as freeze_error:
                     print(f"  ! Warning: Could not freeze interaction: {freeze_error}")
 
             # Force render update
             self.plotter.render_window.Render()
             QApplication.instance().processEvents()
+
+            # Reapply frozen style after render using the maintained state
+            self._maintain_frozen_state()
 
             print("Side view restored - camera position:")
             print(f"  Position: {self.plotter.camera.position}")
@@ -1719,13 +1790,24 @@ class RoboWatchGUI(QMainWindow):
             return
 
         try:
+            # Stop the timer
+            if self.frozen_timer.isActive():
+                self.frozen_timer.stop()
+
             # Re-enable mouse interaction by setting trackball style (default PyVista style)
             if hasattr(self.plotter, 'iren') and self.plotter.iren:
                 try:
                     from vtkmodules.vtkRenderingCore import vtkInteractorStyleTrackballCamera
+
+                    # Create new trackball style for 3D navigation
                     trackball_style = vtkInteractorStyleTrackballCamera()
                     self.plotter.iren.SetInteractorStyle(trackball_style)
-                    print("  ✓ Mouse interaction UNFROZEN")
+
+                    # Re-enable all mouse events that were removed during freezing
+                    iren = self.plotter.iren
+                    # The mouse events will now be handled by the trackball style
+
+                    print("  ✓ Mouse interaction UNFROZEN (view_3d_frozen = False)")
                 except Exception as unfreeze_error:
                     print(f"  ! Warning: Could not unfreeze interaction: {unfreeze_error}")
 
@@ -1947,6 +2029,25 @@ class RoboWatchGUI(QMainWindow):
             self.plotter.remove_actor(self.torch_segment_markers_actor)
             self.torch_segment_markers_actor = None
 
+        # Remove old first path marker
+        if self.first_path_marker_actor is not None:
+            self.plotter.remove_actor(self.first_path_marker_actor)
+            self.first_path_marker_actor = None
+
+        # Remove old first path line
+        if self.first_path_line_actor is not None:
+            self.plotter.remove_actor(self.first_path_line_actor)
+            self.first_path_line_actor = None
+
+        # Remove old first path arrows (list of arrow actors)
+        if self.first_path_arrows_actor is not None:
+            if isinstance(self.first_path_arrows_actor, list):
+                for arrow_actor in self.first_path_arrows_actor:
+                    self.plotter.remove_actor(arrow_actor)
+            else:
+                self.plotter.remove_actor(self.first_path_arrows_actor)
+            self.first_path_arrows_actor = None
+
         # Need at least 1 point to draw segments
         if len(self.picked_points) == 0:
             return
@@ -1956,6 +2057,16 @@ class RoboWatchGUI(QMainWindow):
         fixed_line_length = 20.0  # mm
         torch_lines = []
         endpoint_markers = []
+        first_path1_endpoint = None
+        first_path1_line = None
+        first_path1_index = None
+        first_path1_normal = None
+
+        # Find the first point in Path 1
+        for i in range(len(self.picked_points)):
+            if i < len(self.point_path_id) and self.point_path_id[i] == 1:
+                first_path1_index = i
+                break
 
         for i, point in enumerate(self.picked_points):
             if i < len(self.point_normals):
@@ -1964,11 +2075,18 @@ class RoboWatchGUI(QMainWindow):
 
                 # The line extends 20mm along the normal (fixed length)
                 line_end_point = point + normal_normalized * fixed_line_length
-                torch_lines.append([point, line_end_point])
 
-                # The black point marker is at the torch_distance position (not at the end of the line)
+                # The black/blue point marker is at the torch_distance position (not at the end of the line)
                 torch_endpoint = point + normal_normalized * self.torch_distance
-                endpoint_markers.append(torch_endpoint)
+
+                # Check if this is the first Path 1 point
+                if i == first_path1_index:
+                    first_path1_endpoint = torch_endpoint
+                    first_path1_line = [point, line_end_point]  # Full line from green to end (20mm)
+                    first_path1_normal = normal_normalized
+                else:
+                    torch_lines.append([point, line_end_point])
+                    endpoint_markers.append(torch_endpoint)
 
         if torch_lines:
             torch_lines_array = np.array(torch_lines)
@@ -1985,24 +2103,88 @@ class RoboWatchGUI(QMainWindow):
             from pyvista import PolyData
             torch_polydata = PolyData(line_points, connectivity)
 
-            # Add the torch lines to the plotter (red color)
+            # Add the torch lines to the plotter (black color)
             self.torch_segments_actor = self.plotter.add_mesh(
                 torch_polydata,
-                color='red',
+                color='black',
                 line_width=2,
                 style='wireframe'
             )
 
             # Add black endpoint markers at torch_distance position along each vertical line
-            # 50% size of the green/red points (point_size=5 vs 10)
+            # Same size as green/red points (point_size=10)
             if endpoint_markers:
                 endpoint_markers_array = np.array(endpoint_markers)
                 self.torch_segment_markers_actor = self.plotter.add_points(
                     endpoint_markers_array,
                     color='black',
-                    point_size=5,
+                    point_size=10,
                     render_points_as_spheres=True
                 )
+
+            # Add orange endpoint marker for first Path 1 point (2x bigger than original: 10 -> 20)
+            if first_path1_endpoint is not None:
+                first_path1_array = np.array([first_path1_endpoint])
+                self.first_path_marker_actor = self.plotter.add_points(
+                    first_path1_array,
+                    color='orange',
+                    point_size=20,
+                    render_points_as_spheres=True
+                )
+
+        # Draw the blue line for first Path 1 with arrows
+        if first_path1_line is not None and first_path1_normal is not None and first_path1_endpoint is not None:
+            # Draw blue line from green point to end (full 20mm length)
+            line_start = np.array(first_path1_line[0])
+            line_end = np.array(first_path1_line[1])
+
+            # Create polydata for the blue line
+            from pyvista import PolyData
+            blue_line_points = np.array([line_start, line_end])
+            blue_line_connectivity = [2, 0, 1]
+            blue_line_polydata = PolyData(blue_line_points, blue_line_connectivity)
+
+            # Add the blue line (full length)
+            self.first_path_line_actor = self.plotter.add_mesh(
+                blue_line_polydata,
+                color='blue',
+                line_width=3,
+                style='wireframe'
+            )
+
+            # Create arrows along the line beyond blue point (3 arrows evenly spaced)
+            num_arrows = 3
+            arrow_positions = []
+            # Arrow section: from blue point (first_path1_endpoint) to end (line_end)
+            arrow_vector = line_end - first_path1_endpoint
+            arrow_length = np.linalg.norm(arrow_vector)
+
+            for i in range(num_arrows):
+                # Position arrows at 25%, 50%, 75% along the section from blue to end
+                t = (i + 1) / (num_arrows + 1)
+                arrow_pos = first_path1_endpoint + arrow_vector * t
+                arrow_positions.append(arrow_pos)
+
+            # Add arrows pointing outward (from green to blue)
+            import pyvista as pv
+            arrow_actors = []
+            arrow_scale = 0.5  # Scale factor for arrow size
+
+            for arrow_pos in arrow_positions:
+                # Create arrow pointing in the direction of the normal (outward)
+                # tip_length and tip_radius are 4x larger for bigger arrow heads
+                arrow = pv.Arrow(
+                    start=arrow_pos - first_path1_normal * arrow_scale * 0.5,
+                    direction=first_path1_normal,
+                    scale=arrow_scale,
+                    tip_length=1.0,  # 4x default (0.25)
+                    tip_radius=0.4   # 4x default (0.1)
+                )
+                arrow_actor = self.plotter.add_mesh(arrow, color='blue')
+                arrow_actors.append(arrow_actor)
+
+            # Store all arrow actors as a list (we'll remove them all when updating)
+            self.first_path_arrows_actor = arrow_actors
 
     def clear_points(self):
         """Clear points based on 'all' radio button state"""
